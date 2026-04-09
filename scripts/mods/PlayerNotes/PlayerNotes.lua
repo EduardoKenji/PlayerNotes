@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.3
+    Version: 1.9.4
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -226,12 +226,17 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
             _raw_names[puid] = name
         end
 
-        if not mod:get("show_inline") then return name, color_override end
         if self:is_own_player() then return name, color_override end
         if not puid or puid == "" then return name, color_override end
 
         local note = get_note(puid)
         if not note or note == "" then return name, color_override end
+
+        if not mod:get("show_inline") then
+            -- Icon-only: show a small star glyph (U+E046, Darktide favorites icon) to
+            -- indicate this player has a note, without revealing the text.
+            return (name or "") .. " \xEE\x81\x86", color_override
+        end
 
         local preview = #note > 28 and note:sub(1, 28) .. "..." or note
         return (name or "") .. " · " .. preview, color_override
@@ -498,5 +503,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.3 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.4 Loaded. /note /note_clear /pn_notes")
 end
