@@ -207,15 +207,27 @@ end
 -- ──────────────────────────────────────────────────────────────────────────────
 -- HOOK 1: Inline note in account_name row
 -- Guarded by "show_inline" mod option.
+--
+-- Also caches the raw (unmodified) platform display name per puid so the
+-- top-bar (Alt 2) can show "Name — note" even when inline mode is on.
+-- Without this cache, w.content.account_name already contains " · note"
+-- because the roster blueprint calls user_display_name() through this hook.
 -- ──────────────────────────────────────────────────────────────────────────────
+
+local _raw_names = {}  -- puid → raw platform display name (no note appended)
 
 mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
         local name, color_override = func(self, ...)
+
+        -- Cache raw name before any modification
+        local puid = self:platform_user_id()
+        if puid and puid ~= "" then
+            _raw_names[puid] = name
+        end
+
         if not mod:get("show_inline") then return name, color_override end
         if self:is_own_player() then return name, color_override end
-
-        local puid = self:platform_user_id()
         if not puid or puid == "" then return name, color_override end
 
         local note = get_note(puid)
@@ -354,10 +366,14 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                             local ty = math.max(wy, 10)
                             ty = math.min(ty, sh - dyn_h - 10)
 
-                            -- Use w.content.account_name for the raw name to avoid
-                            -- getting the note-appended string from Hook 1
+                            -- Use _raw_names cache (populated by Hook 1) to get the
+                            -- unmodified platform name. w.content.account_name is set
+                            -- by the roster blueprint calling user_display_name() through
+                            -- Hook 1, so it already contains " · note" when inline is on.
                             mod._hovered_note     = note
-                            mod._hovered_raw_name = (w.content and w.content.account_name) or "Player"
+                            mod._hovered_raw_name = _raw_names[puid]
+                                                 or (w.content and w.content.account_name)
+                                                 or "Player"
                             mod._hover_tx         = tx
                             mod._hover_ty         = ty
                             mod._hover_dyn_h      = dyn_h
