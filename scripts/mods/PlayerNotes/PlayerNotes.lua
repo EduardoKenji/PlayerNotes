@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.4
+    Version: 1.9.5
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -458,6 +458,93 @@ mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_ser
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 7: Hover detection in GroupFinderView._draw_widgets (Party Finder)
+--
+-- GroupFinderView has NO offscreen renderer — widgets are drawn in screen space.
+-- The game itself uses grid:hovered_grid_index() + grid:widget_by_index() for
+-- hover detection in this same view (group_finder_view.lua:777), so we do the
+-- same rather than using geometric bounds or hotspot.is_hover.
+--
+-- account_id (Fatshark backend ID) → platform_user_id via social data service.
+-- If the requesting player is not in the social cache (non-friend), puid will
+-- be nil and we silently skip (no note to show).
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:hook(CLASS.GroupFinderView, "_draw_widgets",
+    function(func, self, dt, t, input_service, ui_renderer, render_settings)
+        func(self, dt, t, input_service, ui_renderer, render_settings)
+
+        -- Reset hover state each frame
+        mod._hovered_note     = nil
+        mod._hovered_raw_name = nil
+        mod._hover_tx         = nil
+        mod._hover_ty         = nil
+        mod._hover_dyn_h      = nil
+
+        local grid = self._player_request_grid
+        if not grid then return end
+
+        -- Use the same hover API the game uses in this view (no offscreen renderer)
+        local hovered_idx = grid:hovered_grid_index()
+        if not hovered_idx then return end
+
+        local widget = grid:widget_by_index(hovered_idx)
+        if not widget then return end
+
+        local content    = widget.content
+        local element    = content and content.element
+        local account_id = element and element.account_id
+        if not account_id then return end
+
+        local social = Managers.data_service and Managers.data_service.social
+        if not social then return end
+
+        local player_info = social:get_player_info_by_account_id(account_id)
+        if not player_info then return end
+
+        local puid = player_info:platform_user_id()
+        local note = get_note(puid)
+        if not note then return end
+
+        local cursor_pos = input_service and input_service:get("cursor")
+        if not cursor_pos then return end
+
+        local inv   = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.inverse_scale or 1
+        local sw    = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.width  * inv or 1920
+        local sh    = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.height * inv or 1080
+        local mx    = Vector3.x(cursor_pos) * inv
+        local my    = Vector3.y(cursor_pos) * inv
+        local dyn_h = compute_tooltip_height(note)
+
+        -- Position tooltip to the left of cursor (player_request_grid is on the right)
+        local tx = mx - TT_W - 20
+        if tx < 10 then tx = mx + 20 end
+        local ty = math.max(my - dyn_h / 2, 10)
+        ty = math.min(ty, sh - dyn_h - 10)
+
+        mod._hovered_note     = note
+        mod._hovered_raw_name = _raw_names[puid]
+                             or player_info:user_display_name()
+                             or "Player"
+        mod._hover_tx         = tx
+        mod._hover_ty         = ty
+        mod._hover_dyn_h      = dyn_h
+    end
+)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 8: Cleanup on GroupFinderView close
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
+    mod._hovered_note     = nil
+    mod._hovered_raw_name = nil
+    mod._hover_tx         = nil
+    mod._hover_ty         = nil
+    mod._hover_dyn_h      = nil
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- COMMAND: /note <text>
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -503,5 +590,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.4 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.5 Loaded. /note /note_clear /pn_notes")
 end
