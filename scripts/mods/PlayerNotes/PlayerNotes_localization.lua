@@ -63,4 +63,11 @@ return {
     opt_show_tooltip_title_description = {
         en = "Shows the full note in a floating tooltip next to the hovered player row.",
     },
+
+    opt_show_world_notes_title = {
+        en = "Show note above player head",
+    },
+    opt_show_world_notes_title_description = {
+        en = "Shows the player's note to the right of their nameplate in the game world (hub and missions).",
+    },
 }

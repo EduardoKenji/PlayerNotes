@@ -23,6 +23,13 @@ return {
                 default_value = true,
                 title         = "opt_show_tooltip_title",
             },
+            {
+                setting_id    = "show_world_notes",
+                type          = "checkbox",
+                default_value = true,
+                title         = "opt_show_world_notes_title",
+            },
         },
     },
 }
+

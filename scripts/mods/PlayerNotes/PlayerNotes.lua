@@ -37,6 +37,14 @@ local UIScenegraph        = require("scripts/managers/ui/ui_scenegraph")
 local UIWorkspaceSettings = require("scripts/settings/ui/ui_workspace_settings")
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- WORLD NOTES — path used as the element filename in register_hud_element.
+-- The class itself is defined inline below; a require hook intercepts this
+-- path so no file ever needs to be loaded from disk via io_dofile.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local _PN_HUD_ELEMENT_PATH = "PlayerNotes/scripts/mods/PlayerNotes/hud_element_player_notes"
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- CONSTANTS
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -640,6 +648,44 @@ mod:command("pn_notes", "List all saved PlayerNotes.", function()
     end
     if count == 0 then mod:echo("No notes saved yet.") end
 end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 9: Inject "pn_note" template into HudElementWorldMarkers
+--
+-- HudElementWorldMarkers.init populates self._marker_templates from a static
+-- settings list. We inject our template after that loop runs so that
+-- "add_world_marker_unit" events with type "pn_note" are handled correctly.
+--
+-- Fires each time a hub/mission is entered (HUD is recreated per session).
+-- String form used (not CLASS.) because HUD element classes may not be
+-- registered in the CLASS global.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:hook_safe("HudElementWorldMarkers", "init", function(self)
+    local ok, tmpl = pcall(require, _PN_TEMPLATE_PATH)
+    if ok and tmpl then
+        self._marker_templates[tmpl.name] = tmpl
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 10: Register HudElementPlayerNotes via DMF's proper HUD element API
+--
+-- mod:register_hud_element() wraps injection in safe_call_nrc, so a missing
+-- or broken element file logs a DMF error instead of crashing the game.
+-- It also calls add_require_path internally at injection time, and handles
+-- lifecycle events (mod disable, HUD recreation) automatically.
+--
+-- visibility_groups = { "alive" }: active when the player character is alive,
+-- which covers both missions and the hub (health extension is present in hub).
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:register_hud_element({
+    class_name        = "HudElementPlayerNotes",
+    filename          = _PN_HUD_ELEMENT_PATH,
+    use_hud_scale     = true,
+    visibility_groups = { "alive" },
+})
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- LIFECYCLE
