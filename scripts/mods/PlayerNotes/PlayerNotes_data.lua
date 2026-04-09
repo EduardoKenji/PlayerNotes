@@ -1,14 +1,28 @@
-local mod = get_mod("PlayerNotes")
-
 return {
-    name        = mod:localize("mod_title"),
-    description = mod:localize("mod_description"),
-    version     = "1.8.0",
+    name         = "PlayerNotes",
+    description  = "Add persistent notes to any player in the Social panel or Party Finder. Hover a player to see their note.",
+    version      = "1.9.4",
     is_togglable = true,
     options = {
         widgets = {
-            -- No configurable options for v1.x.
-            -- Future: note font size, tooltip position offset, etc.
+            {
+                setting_id    = "show_inline",
+                type          = "checkbox",
+                default_value = false,
+                title         = "opt_show_inline_title",
+            },
+            {
+                setting_id    = "show_top_bar",
+                type          = "checkbox",
+                default_value = true,
+                title         = "opt_show_top_bar_title",
+            },
+            {
+                setting_id    = "show_tooltip",
+                type          = "checkbox",
+                default_value = true,
+                title         = "opt_show_tooltip_title",
+            },
         },
     },
 }
