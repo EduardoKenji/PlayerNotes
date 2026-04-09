@@ -1,41 +1,27 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.8.0
+    Version: 1.9.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
-    Three simultaneous display mechanisms:
+    Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
 
-    1. Inline note (Alternative 1) — hook PlayerInfo.user_display_name to append
-       " · <note>" to the account_name line. Confirmed working.
-
-    2. Top-of-screen text (Alternative 2) — when hovering a player with a note,
-       show "<name> — <note>" in a small bar at the top of the screen. Uses the
-       UIConstantElements overlay renderer (drawn above ALL views after view_handler).
-
-    3. Hover tooltip (Alternative 3) — floating box near the hovered player row.
-       Same renderer as Alternative 2.
+    1. Inline note — hook PlayerInfo.user_display_name to append " · <note>" to the name.
+    2. Top-bar   — when hovering, show "Name — note" in a small bar at top-left.
+    3. Tooltip   — floating box near the hovered player row, sized to fit the text.
 
     Why UIConstantElements renderer works:
       UIManager.render() call order:
         1. view_handler:draw()           — SocialMenuRosterView and all UI views
-        2. ui_constant_elements:draw()   — overlay viewport (type="overlay"), drawn
-                                          on top of ALL views (chat box, popups, etc.)
+        2. ui_constant_elements:draw()   — overlay viewport, drawn on top of ALL views
         3. hud:draw()
-      We hook UIConstantElements.draw (CLASS.UIConstantElements) and inject our own
-      begin_pass/UIWidget.draw/end_pass after func() runs. The overlay viewport
-      composites on top of the social panel.
+      We hook UIConstantElements.draw and inject our own begin_pass/UIWidget.draw/end_pass
+      after func() runs. The overlay viewport composites on top of the social panel.
 
     Hover detection:
-      SocialMenuRosterView._draw_widgets is used ONLY to detect which player is
-      hovered (geometric bounds check — hotspot.is_hover never works for offscreen-
-      rendered roster widgets). Detected state stored in mod._hovered_note etc.
-      UIConstantElements.draw hook reads that state and draws.
-
-    Usage:
-      1. Open Social panel, right-click a player → click "Add Note".
-      2. Type  /note good psyker for havoc 40  in chat → Enter.
-      3. Note appears inline, at top of screen on hover, and as tooltip on hover.
+      SocialMenuRosterView._draw_widgets is used ONLY to detect which player is hovered
+      (geometric bounds check — hotspot.is_hover never works for offscreen-rendered roster
+      widgets). Detected state stored in mod._ vars. UIConstantElements.draw reads that state.
 --]]
 
 local mod = get_mod("PlayerNotes")
@@ -62,16 +48,32 @@ local STR_NONE_SEL   = "Click 'Add Note' on a player first."
 local STR_USAGE_NOTE = "Usage: /note [your note text]"
 
 -- Tooltip dimensions (Alternative 3)
-local TT_W   = 340
-local TT_H   = 130
-local TT_PAD = 10
-local TT_Z   = 997
+-- Height is computed dynamically per note; TT_H_MIN is the floor.
+local TT_W     = 340
+local TT_H_MIN = 44
+local TT_PAD   = 10
+local TT_Z     = 997
 
 -- Top-text bar dimensions (Alternative 2)
 local A2_W   = 600
 local A2_H   = 34
-local A2_X   = 30    -- left edge
-local A2_Y   = 20    -- top of screen
+local A2_X   = 30
+local A2_Y   = 20
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- TOOLTIP HEIGHT CALCULATION
+-- Approximates word-wrapped line count for proxima_nova_bold at font_size 16
+-- in a box of width (TT_W - 2*TT_PAD).
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function compute_tooltip_height(text)
+    -- ~8px average char width for proxima_nova_bold at size 16
+    local chars_per_line = math.floor((TT_W - TT_PAD * 2) / 8)
+    local line_h         = 22   -- px per line including leading
+    local lines          = math.max(1, math.ceil(#text / chars_per_line))
+    -- TT_PAD top + line content + TT_PAD bottom + a little extra breathing room
+    return math.max(TT_H_MIN, lines * line_h + TT_PAD * 2 + 6)
+end
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -99,21 +101,17 @@ end
 mod._popup_puid           = nil
 mod._editing_puid         = nil
 mod._editing_name         = nil
--- Hover state (nil when not hovering a player with a note)
-mod._hovered_note         = nil   -- note text
-mod._hovered_display_name = nil   -- player display name for Alternative 2
+mod._hovered_note         = nil   -- full note text
+mod._hovered_raw_name     = nil   -- raw account name (no note appended)
 mod._hover_tx             = nil   -- tooltip x (UI base space)
 mod._hover_ty             = nil   -- tooltip y (UI base space)
+mod._hover_dyn_h          = nil   -- tooltip height for current note
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- OVERLAY WIDGET DEFINITIONS
---
--- Widgets are anchored to "screen" in our own minimal scenegraph.
--- screen.world_position = {0, 0, 2}  (scale="fit", position={0,0,2})
--- widget.offset = {tx, ty, z} → final position = {tx, ty, z+2}
 -- ──────────────────────────────────────────────────────────────────────────────
 
--- Alternative 3: floating tooltip
+-- Alternative 3: floating tooltip (height mutated dynamically at draw time)
 local _pn_tooltip_def = UIWidget.create_definition({
     {
         pass_type = "rect",
@@ -121,7 +119,7 @@ local _pn_tooltip_def = UIWidget.create_definition({
         style     = {
             color  = { 220, 160, 130, 60 },
             offset = { -2, -2, 0 },
-            size   = { TT_W + 4, TT_H + 4 },
+            size   = { TT_W + 4, TT_H_MIN + 4 },
         },
     },
     {
@@ -130,11 +128,12 @@ local _pn_tooltip_def = UIWidget.create_definition({
         style     = {
             color  = { 230, 10, 10, 10 },
             offset = { 0, 0, 1 },
-            size   = { TT_W, TT_H },
+            size   = { TT_W, TT_H_MIN },
         },
     },
     {
         pass_type = "text",
+        style_id  = "note_text",
         value_id  = "note_text",
         value     = "",
         style     = {
@@ -142,7 +141,7 @@ local _pn_tooltip_def = UIWidget.create_definition({
             font_size                 = 16,
             text_color                = { 255, 255, 255, 255 },
             offset                    = { TT_PAD, TT_PAD, 2 },
-            size                      = { TT_W - TT_PAD * 2, TT_H - TT_PAD * 2 },
+            size                      = { TT_W - TT_PAD * 2, TT_H_MIN - TT_PAD * 2 },
             text_horizontal_alignment = "left",
             text_vertical_alignment   = "top",
             word_wrap                 = true,
@@ -206,12 +205,14 @@ local function _ensure_overlay_ready()
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
--- HOOK 1: Inline note in account_name row (CONFIRMED WORKING)
+-- HOOK 1: Inline note in account_name row
+-- Guarded by "show_inline" mod option.
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
         local name, color_override = func(self, ...)
+        if not mod:get("show_inline") then return name, color_override end
         if self:is_own_player() then return name, color_override end
 
         local puid = self:platform_user_id()
@@ -226,7 +227,7 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
 )
 
 -- ──────────────────────────────────────────────────────────────────────────────
--- HOOK 2: Inject note button into the right-click popup (CONFIRMED WORKING)
+-- HOOK 2: Inject note button into the right-click popup
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
@@ -277,35 +278,39 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
-    mod._popup_puid           = nil
-    mod._editing_puid         = nil
-    mod._editing_name         = nil
-    mod._hovered_note         = nil
-    mod._hovered_display_name = nil
-    mod._hover_tx             = nil
-    mod._hover_ty             = nil
+    mod._popup_puid       = nil
+    mod._editing_puid     = nil
+    mod._editing_name     = nil
+    mod._hovered_note     = nil
+    mod._hovered_raw_name = nil
+    mod._hover_tx         = nil
+    mod._hover_ty         = nil
+    mod._hover_dyn_h      = nil
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- HOOK 5: Hover detection in SocialMenuRosterView._draw_widgets
 --
--- This hook ONLY detects which player is hovered and stores state in mod._.
--- Actual rendering moved to UIConstantElements.draw (Hook 6) which uses the
--- overlay renderer that draws on top of all game views.
+-- Detects which player is hovered and stores state in mod._ vars.
+-- Rendering happens in UIConstantElements.draw (Hook 6) via the overlay renderer.
 --
 -- hotspot.is_hover NEVER works here — roster widgets are drawn in an offscreen
--- render target. Use geometric bounds check with world_position + widget.offset.
+-- render target. Geometric bounds check with world_position + widget.offset is used.
+--
+-- Raw account name (w.content.account_name) is stored instead of calling
+-- pi:user_display_name() to avoid getting the note-appended version from Hook 1.
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
     function(func, self, dt, t, input_service, ui_renderer, render_settings)
         func(self, dt, t, input_service, ui_renderer, render_settings)
 
-        -- Reset hover state each frame; set below if hover detected
-        mod._hovered_note         = nil
-        mod._hovered_display_name = nil
-        mod._hover_tx             = nil
-        mod._hover_ty             = nil
+        -- Reset hover state each frame
+        mod._hovered_note     = nil
+        mod._hovered_raw_name = nil
+        mod._hover_tx         = nil
+        mod._hover_ty         = nil
+        mod._hover_dyn_h      = nil
 
         if self._popup_menu then return end
 
@@ -330,7 +335,7 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
             if off then
                 local wx = gx + off[1]
                 local wy = gy + off[2]
-                -- w.content.size is authoritative — w.size is always nil (UIWidget.init)
+                -- w.content.size is authoritative; w.size is always nil (UIWidget.init)
                 local cs = w.content and w.content.size
                 local ww = (cs and cs[1]) or 480
                 local wh = (cs and cs[2]) or 80
@@ -341,19 +346,24 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                         local puid = pi:platform_user_id()
                         local note = get_note(puid)
                         if note then
-                            -- Compute tooltip position (right of widget, or left if off-screen)
+                            local dyn_h = compute_tooltip_height(note)
+
+                            -- Position tooltip to the right; flip left if off-screen
                             local tx = wx + ww + 15
                             if tx + TT_W > sw then tx = wx - TT_W - 15 end
                             local ty = math.max(wy, 10)
-                            ty = math.min(ty, sh - TT_H - 10)
+                            ty = math.min(ty, sh - dyn_h - 10)
 
-                            mod._hovered_note         = note
-                            mod._hovered_display_name = pi:user_display_name()
-                            mod._hover_tx             = tx
-                            mod._hover_ty             = ty
+                            -- Use w.content.account_name for the raw name to avoid
+                            -- getting the note-appended string from Hook 1
+                            mod._hovered_note     = note
+                            mod._hovered_raw_name = (w.content and w.content.account_name) or "Player"
+                            mod._hover_tx         = tx
+                            mod._hover_ty         = ty
+                            mod._hover_dyn_h      = dyn_h
                         end
                     end
-                    break  -- stop at first widget under cursor
+                    break
                 end
             end
         end
@@ -367,11 +377,6 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
 --   1. view_handler:draw()          ← SocialMenuRosterView here
 --   2. ui_constant_elements:draw()  ← WE HOOK HERE (overlay viewport on top)
 --   3. hud:draw()
---
--- self._ui_renderer is UIConstantElements' own renderer (viewport_type="overlay").
--- We create one fresh begin_pass/end_pass block using our own minimal scenegraph.
--- UIWidget.draw reads ui_renderer.ui_scenegraph (set by begin_pass) to resolve
--- the "screen" anchor node world_position = {0,0,2}. Widget.offset adds to that.
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_service)
@@ -381,37 +386,51 @@ mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_ser
     if not note then return end
     if not _ensure_overlay_ready() then return end
 
-    -- Keep scenegraph scale in sync with resolution changes
+    local show_top_bar = mod:get("show_top_bar")
+    local show_tooltip = mod:get("show_tooltip")
+    if not show_top_bar and not show_tooltip then return end
+
     UIScenegraph.update_scenegraph(_pn_scenegraph, RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.scale or 1)
 
     local ui_renderer     = self._ui_renderer
     local render_settings = self._render_settings
     local saved_layer     = render_settings.start_layer
 
-    render_settings.start_layer = 900  -- above social panel, below nothing
+    render_settings.start_layer = 900
 
     UIRenderer.begin_pass(ui_renderer, _pn_scenegraph, input_service, dt, render_settings)
 
-    -- ── Alternative 3: floating tooltip near hovered widget ───────────────────
-    local tx = mod._hover_tx or 800
-    local ty = mod._hover_ty or 300
-    _pn_tooltip_widget.content.note_text = note
-    _pn_tooltip_widget.offset[1]          = tx
-    _pn_tooltip_widget.offset[2]          = ty
-    _pn_tooltip_widget.offset[3]          = TT_Z
-    _pn_tooltip_widget.visible            = true
-    _pn_tooltip_widget.alpha_multiplier   = 1
-    pcall(UIWidget.draw, _pn_tooltip_widget, ui_renderer)
+    -- ── Alternative 3: floating tooltip (dynamic height) ─────────────────────
+    if show_tooltip then
+        local tx    = mod._hover_tx or 800
+        local ty    = mod._hover_ty or 300
+        local dyn_h = mod._hover_dyn_h or TT_H_MIN
 
-    -- ── Alternative 2: name + note bar at top of screen ──────────────────────
-    local display_name = mod._hovered_display_name or "Player"
-    _pn_toptext_widget.content.label_text = display_name .. "  —  " .. note
-    _pn_toptext_widget.offset[1]           = A2_X
-    _pn_toptext_widget.offset[2]           = A2_Y
-    _pn_toptext_widget.offset[3]           = TT_Z
-    _pn_toptext_widget.visible             = true
-    _pn_toptext_widget.alpha_multiplier    = 1
-    pcall(UIWidget.draw, _pn_toptext_widget, ui_renderer)
+        -- Resize widget styles to fit the actual note text
+        _pn_tooltip_widget.style.border.size[2]     = dyn_h + 4
+        _pn_tooltip_widget.style.background.size[2] = dyn_h
+        _pn_tooltip_widget.style.note_text.size[2]  = dyn_h - TT_PAD * 2
+
+        _pn_tooltip_widget.content.note_text  = note
+        _pn_tooltip_widget.offset[1]          = tx
+        _pn_tooltip_widget.offset[2]          = ty
+        _pn_tooltip_widget.offset[3]          = TT_Z
+        _pn_tooltip_widget.visible            = true
+        _pn_tooltip_widget.alpha_multiplier   = 1
+        pcall(UIWidget.draw, _pn_tooltip_widget, ui_renderer)
+    end
+
+    -- ── Alternative 2: top-left name + note bar ───────────────────────────────
+    if show_top_bar then
+        local raw_name = mod._hovered_raw_name or "Player"
+        _pn_toptext_widget.content.label_text = raw_name .. "  —  " .. note
+        _pn_toptext_widget.offset[1]          = A2_X
+        _pn_toptext_widget.offset[2]          = A2_Y
+        _pn_toptext_widget.offset[3]          = TT_Z
+        _pn_toptext_widget.visible            = true
+        _pn_toptext_widget.alpha_multiplier   = 1
+        pcall(UIWidget.draw, _pn_toptext_widget, ui_renderer)
+    end
 
     UIRenderer.end_pass(ui_renderer)
     render_settings.start_layer = saved_layer
@@ -463,5 +482,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.8.0 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.0 Loaded. /note /note_clear /pn_notes")
 end

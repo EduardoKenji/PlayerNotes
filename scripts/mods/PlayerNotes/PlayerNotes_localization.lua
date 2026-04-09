@@ -18,5 +18,15 @@ return {
         -- Command descriptions
         cmd_note_desc       = "Save a note for the last selected player.",
         cmd_note_clear_desc = "Clear the note for the last selected player.",
+
+        -- Mod options
+        opt_show_inline_title   = "Display note within player's rectangle",
+        opt_show_inline_tooltip = "Appends a short note preview next to the player name in the friend list row.",
+
+        opt_show_top_bar_title   = "Display note in the top left",
+        opt_show_top_bar_tooltip = "Shows 'Name — note' in a bar at the top-left of the screen when hovering a player with a note.",
+
+        opt_show_tooltip_title   = "Display note in tooltips",
+        opt_show_tooltip_tooltip = "Shows the full note in a floating tooltip next to the hovered player row.",
     },
 }
