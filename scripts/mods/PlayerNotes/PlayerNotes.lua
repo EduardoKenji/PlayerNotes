@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.0
+    Version: 1.9.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -498,5 +498,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.0 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.1 Loaded. /note /note_clear /pn_notes")
 end
