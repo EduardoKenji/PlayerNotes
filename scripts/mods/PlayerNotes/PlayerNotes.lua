@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.1
+    Version: 1.9.2
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -29,6 +29,18 @@ local mod = get_mod("PlayerNotes")
 -- ──────────────────────────────────────────────────────────────────────────────
 -- DEPENDENCIES
 -- ──────────────────────────────────────────────────────────────────────────────
+
+-- Register option strings in the global localization database so the game's
+-- options UI (which uses Managers.localization:localize()) can resolve them.
+-- mod:localize() uses a per-mod table that the game's options view never reads.
+mod:add_global_localize_strings({
+    opt_show_inline_title   = { en = "Display note within player's rectangle" },
+    opt_show_inline_tooltip = { en = "Appends a short note preview next to the player name in the friend list row." },
+    opt_show_top_bar_title  = { en = "Display note in the top left" },
+    opt_show_top_bar_tooltip = { en = "Shows 'Name - note' in a bar at the top-left when hovering a player with a note." },
+    opt_show_tooltip_title  = { en = "Display note in tooltip" },
+    opt_show_tooltip_tooltip = { en = "Shows the full note in a floating tooltip next to the hovered player row." },
+})
 
 local UISoundEvents       = require("scripts/settings/ui/ui_sound_events")
 local UIWidget            = require("scripts/managers/ui/ui_widget")
@@ -498,5 +510,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.1 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.2 Loaded. /note /note_clear /pn_notes")
 end
