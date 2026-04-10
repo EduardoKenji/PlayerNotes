@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.10
+    Version: 1.9.11
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -42,7 +42,7 @@ local UIWorkspaceSettings = require("scripts/settings/ui/ui_workspace_settings")
 -- path so no file ever needs to be loaded from disk via io_dofile.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local _PN_HUD_ELEMENT_PATH = "PlayerNotes/scripts/mods/PlayerNotes/hud_element_player_notes"
+local _PN_HUD_ELEMENT_PATH  = "PlayerNotes/scripts/mods/PlayerNotes/hud_element_player_notes"
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- CONSTANTS
@@ -230,6 +230,70 @@ local _pn_toptext_def = UIWidget.create_definition({
         },
     },
 }, "screen")
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- WORLD MARKER TEMPLATE (inline — no require path needed)
+-- Injected into HudElementWorldMarkers._marker_templates via Hook 9.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local _pn_world_note_size = { 500, 24 }
+
+local _pn_world_marker_template = {
+    name              = "pn_note",
+    unit_node         = "j_head",
+    position_offset   = { 0, 0, 0.4 },
+    check_line_of_sight = false,
+    max_distance      = 100,
+    screen_clamp      = false,
+    start_layer       = 302,
+    size              = _pn_world_note_size,
+    scale_settings = {
+        distance_max = 20,
+        distance_min = 10,
+        scale_from   = 0.8,
+        scale_to     = 1,
+    },
+    fade_settings = {
+        default_fade    = 1,
+        fade_from       = 0,
+        fade_to         = 1,
+        distance_max    = 100,
+        distance_min    = 50,
+        easing_function = math.ease_exp,
+    },
+    create_widget_defintion = function(tmpl, scenegraph_id)
+        return UIWidget.create_definition({
+            {
+                pass_type = "text",
+                style_id  = "pn_note_text",
+                value_id  = "pn_note_text",
+                value     = "",
+                style     = {
+                    horizontal_alignment      = "left",
+                    text_horizontal_alignment = "left",
+                    text_vertical_alignment   = "center",
+                    vertical_alignment        = "center",
+                    offset                    = { 0, 0, 2 },
+                    font_type                 = "proxima_nova_bold",
+                    font_size                 = 18,
+                    default_font_size         = 18,
+                    text_color                = { 255, 220, 200, 150 },
+                    size                      = _pn_world_note_size,
+                },
+            },
+        }, scenegraph_id)
+    end,
+    on_enter = function(widget, marker)
+        local data = marker.data
+        widget.content.pn_note_text = (data and data.note) or ""
+    end,
+    on_exit = function(widget, marker)
+        -- nothing to clean up
+    end,
+    update_function = function(parent, ui_renderer, widget, marker, tmpl, dt, t)
+        widget.offset[1] = widget.offset[1] + (200 * marker.scale + 15)
+    end,
+}
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- OVERLAY RENDERING STATE  (lazy init on first draw)
@@ -662,10 +726,7 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe("HudElementWorldMarkers", "init", function(self)
-    local ok, tmpl = pcall(require, _PN_TEMPLATE_PATH)
-    if ok and tmpl then
-        self._marker_templates[tmpl.name] = tmpl
-    end
+    self._marker_templates[_pn_world_marker_template.name] = _pn_world_marker_template
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -711,5 +772,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.10 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v1.9.11 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end

@@ -9,8 +9,7 @@
 --       → player_info:platform_user_id()  (Steam ID / Xbox XUID / PSN)
 --         → mod:get("player_notes")[puid]
 
-local mod      = get_mod("PlayerNotes")
-local Missions = require("scripts/settings/mission/mission_templates")
+local mod = get_mod("PlayerNotes")
 
 local HudElementPlayerNotes = class("HudElementPlayerNotes")
 
@@ -20,12 +19,6 @@ HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._parent     = parent
     self._scan_timer = 0        -- fire first scan on next update
     self._active     = {}       -- player_unit → marker_id
-
-    local ok, mission_name = pcall(function()
-        return Managers.state.mission:mission_name()
-    end)
-    local settings    = ok and mission_name and Missions[mission_name]
-    self._is_hub      = settings and settings.is_hub or false
 end
 
 HudElementPlayerNotes.update = function(self, dt, t)
@@ -59,7 +52,7 @@ HudElementPlayerNotes._scan_players = function(self)
             local unit = player.player_unit
             if not unit or not alive[unit] then break end
 
-            local account_id = player:account_id and player:account_id()
+            local account_id = player.account_id and player:account_id()
             if not account_id then break end
 
             local player_info = social:get_player_info_by_account_id(account_id)
