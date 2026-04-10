@@ -76,6 +76,17 @@ local function compute_tooltip_height(text)
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- CACHES  (must be declared before any function that references them)
+-- _raw_names:  puid → raw platform display name (no note appended)
+-- _puid_cache: player_info object reference → puid
+--   Avoids calling platform_user_id()/account_id() in the per-frame hover loop.
+--   Populated once in Hook 1 (roster blueprint calls, safe context).
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local _raw_names  = {}
+local _puid_cache = {}
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -84,6 +95,10 @@ local function get_notes()
 end
 
 local function save_note(puid, text)
+    if not puid or puid == "" then
+        mod:echo("[PlayerNotes] ERROR: cannot save note — player key is nil/empty.")
+        return
+    end
     local notes = get_notes()
     notes[puid] = (text and text ~= "") and text or nil
     mod:set("player_notes", notes)
@@ -245,14 +260,6 @@ end
 -- Without this cache, w.content.account_name already contains " · note"
 -- because the roster blueprint calls user_display_name() through this hook.
 -- ──────────────────────────────────────────────────────────────────────────────
-
-local _raw_names   = {}  -- puid → raw platform display name (no note appended)
-local _puid_cache  = {}  -- player_info object reference → puid
--- _puid_cache avoids calling platform_user_id()/account_id() in the per-frame
--- hover loop. get_player_key() may trigger a native C++ exception on
--- offline/cross-platform player_info objects when called every frame (pcall
--- does not catch native exceptions). Populated once in Hook 1 which runs in a
--- safe context (roster blueprint calls, not bare render-loop iteration).
 
 mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
