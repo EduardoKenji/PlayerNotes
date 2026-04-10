@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.8
+    Version: 1.9.9
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -252,11 +252,13 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
         local name, color_override = func(self, ...)
 
-        -- Cache raw name before any modification (keyed by the same stable key used for notes)
+        -- Cache raw name in memory only — never call mod:set here.
+        -- This hook fires for every player rendered in the roster every frame;
+        -- mod:set inside a per-frame hook causes excessive table cloning (DMF
+        -- clones on every get/set) which can crash the native SJSON serializer.
         local puid = get_player_key(self)
         if puid then
             _raw_names[puid] = name
-            save_player_name(puid, name)
         end
 
         if self:is_own_player() then return name, color_override end
@@ -286,8 +288,6 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
 
         if not player_info:is_own_player() and puid then
             mod._popup_puid = puid
-            -- Keep name cache warm (display name may not be in _raw_names yet for offline players)
-            save_player_name(puid, player_info:user_display_name())
 
             local note    = get_note(puid)
             local preview = note and (#note > 40 and note:sub(1, 40) .. "..." or note)
@@ -633,10 +633,12 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the name cache.", function()
-    mod:set("player_notes", {})
-    mod:set("player_names", {})
-    -- Also clear the in-memory raw name cache
-    for k in pairs(_raw_names) do _raw_names[k] = nil end
+    -- Use nil (not {}) to remove the key entirely — avoids passing an empty
+    -- table to the native SJSON serializer, which can cause a silent crash.
+    mod:set("player_notes", nil)
+    mod:set("player_names", nil)
+    -- Replace in-memory caches with fresh tables (safer than iterating + nil-ing)
+    _raw_names = {}
     mod:echo("[PlayerNotes] All notes and name cache cleared.")
 end)
 
@@ -645,5 +647,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.8 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v1.9.9 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end
