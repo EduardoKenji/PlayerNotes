@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.5
+    Version: 1.9.6
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -92,6 +92,38 @@ end
 local function get_note(puid)
     if not puid or puid == "" then return nil end
     return get_notes()[puid]
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- PLAYER KEY
+-- platform_user_id() returns "" for cross-platform offline friends (globe icon).
+-- Fall back to account_id() so those players still get a stable, usable key.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function get_player_key(player_info)
+    local puid = player_info:platform_user_id()
+    if puid and puid ~= "" then return puid end
+    local ok, aid = pcall(function() return player_info:account_id() end)
+    if ok and aid and aid ~= "" then return aid end
+    return nil
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- NAME CACHE
+-- Persisted so /pn_notes can show readable names even after a restart.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function save_player_name(key, name)
+    if not key or key == "" or not name or name == "" then return end
+    local names = mod:get("player_names") or {}
+    if names[key] == name then return end
+    names[key] = name
+    mod:set("player_names", names)
+end
+
+local function get_cached_name(key)
+    if not key or key == "" then return nil end
+    return _raw_names[key] or (mod:get("player_names") or {})[key]
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -220,14 +252,15 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
         local name, color_override = func(self, ...)
 
-        -- Cache raw name before any modification
-        local puid = self:platform_user_id()
-        if puid and puid ~= "" then
+        -- Cache raw name before any modification (keyed by the same stable key used for notes)
+        local puid = get_player_key(self)
+        if puid then
             _raw_names[puid] = name
+            save_player_name(puid, name)
         end
 
         if self:is_own_player() then return name, color_override end
-        if not puid or puid == "" then return name, color_override end
+        if not puid then return name, color_override end
 
         local note = get_note(puid)
         if not note or note == "" then return name, color_override end
@@ -249,10 +282,12 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
 
 mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
     function(func, self, parent, player_info, menu_items, num_menu_items, ...)
-        local puid = player_info:platform_user_id()
+        local puid = get_player_key(player_info)
 
-        if not player_info:is_own_player() and puid and puid ~= "" then
+        if not player_info:is_own_player() and puid then
             mod._popup_puid = puid
+            -- Keep name cache warm (display name may not be in _raw_names yet for offline players)
+            save_player_name(puid, player_info:user_display_name())
 
             local note    = get_note(puid)
             local preview = note and (#note > 40 and note:sub(1, 40) .. "..." or note)
@@ -284,8 +319,11 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
 
 mod:hook_safe(CLASS.SocialMenuRosterView, "init", function(self, ...)
     function self:cb_pn_edit_note(player_info)
-        mod._editing_puid = player_info:platform_user_id()
+        mod._editing_puid = get_player_key(player_info)
         mod._editing_name = player_info:user_display_name(true, true)
+        if mod._editing_puid then
+            save_player_name(mod._editing_puid, mod._editing_name)
+        end
         mod:echo(string.format(STR_SELECTED, mod._editing_name or "player"))
     end
 end)
@@ -360,7 +398,7 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                 if mx >= wx and mx <= wx + ww and my >= wy and my <= wy + wh then
                     local pi = w.content and w.content.player_info
                     if pi and not pi:is_own_player() then
-                        local puid = pi:platform_user_id()
+                        local puid = get_player_key(pi)
                         local note = get_note(puid)
                         if note then
                             local dyn_h = compute_tooltip_height(note)
@@ -376,7 +414,7 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                             -- by the roster blueprint calling user_display_name() through
                             -- Hook 1, so it already contains " · note" when inline is on.
                             mod._hovered_note     = note
-                            mod._hovered_raw_name = _raw_names[puid]
+                            mod._hovered_raw_name = get_cached_name(puid)
                                                  or (w.content and w.content.account_name)
                                                  or "Player"
                             mod._hover_tx         = tx
@@ -502,7 +540,7 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
         local player_info = social:get_player_info_by_account_id(account_id)
         if not player_info then return end
 
-        local puid = player_info:platform_user_id()
+        local puid = get_player_key(player_info)
         local note = get_note(puid)
         if not note then return end
 
@@ -523,7 +561,7 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
         ty = math.min(ty, sh - dyn_h - 10)
 
         mod._hovered_note     = note
-        mod._hovered_raw_name = _raw_names[puid]
+        mod._hovered_raw_name = get_cached_name(puid)
                              or player_info:user_display_name()
                              or "Player"
         mod._hover_tx         = tx
@@ -580,7 +618,8 @@ mod:command("pn_notes", "List all saved PlayerNotes.", function()
     local count = 0
     for k, v in pairs(notes) do
         count = count + 1
-        mod:echo(string.format("[%d] %s → %s", count, tostring(k), tostring(v)))
+        local display_name = get_cached_name(k) or k
+        mod:echo(string.format("[%d] %s → %s", count, display_name, tostring(v)))
     end
     if count == 0 then mod:echo("No notes saved yet.") end
 end)
@@ -590,5 +629,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.5 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.6 Loaded. /note /note_clear /pn_notes")
 end
