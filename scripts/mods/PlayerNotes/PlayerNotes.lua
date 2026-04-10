@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.4
+    Version: 1.9.10
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -76,6 +76,17 @@ local function compute_tooltip_height(text)
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- CACHES  (must be declared before any function that references them)
+-- _raw_names:  puid → raw platform display name (no note appended)
+-- _puid_cache: player_info object reference → puid
+--   Avoids calling platform_user_id()/account_id() in the per-frame hover loop.
+--   Populated once in Hook 1 (roster blueprint calls, safe context).
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local _raw_names  = {}
+local _puid_cache = {}
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -84,6 +95,10 @@ local function get_notes()
 end
 
 local function save_note(puid, text)
+    if not puid or puid == "" then
+        mod:echo("[PlayerNotes] ERROR: cannot save note — player key is nil/empty.")
+        return
+    end
     local notes = get_notes()
     notes[puid] = (text and text ~= "") and text or nil
     mod:set("player_notes", notes)
@@ -92,6 +107,38 @@ end
 local function get_note(puid)
     if not puid or puid == "" then return nil end
     return get_notes()[puid]
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- PLAYER KEY
+-- platform_user_id() returns "" for cross-platform offline friends (globe icon).
+-- Fall back to account_id() so those players still get a stable, usable key.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function get_player_key(player_info)
+    local puid = player_info:platform_user_id()
+    if puid and puid ~= "" then return puid end
+    local ok, aid = pcall(function() return player_info:account_id() end)
+    if ok and aid and aid ~= "" then return aid end
+    return nil
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- NAME CACHE
+-- Persisted so /pn_notes can show readable names even after a restart.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function save_player_name(key, name)
+    if not key or key == "" or not name or name == "" then return end
+    local names = mod:get("player_names") or {}
+    if names[key] == name then return end
+    names[key] = name
+    mod:set("player_names", names)
+end
+
+local function get_cached_name(key)
+    if not key or key == "" then return nil end
+    return _raw_names[key] or (mod:get("player_names") or {})[key]
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -214,20 +261,22 @@ end
 -- because the roster blueprint calls user_display_name() through this hook.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local _raw_names = {}  -- puid → raw platform display name (no note appended)
-
 mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
         local name, color_override = func(self, ...)
 
-        -- Cache raw name before any modification
-        local puid = self:platform_user_id()
-        if puid and puid ~= "" then
-            _raw_names[puid] = name
+        -- Populate puid and name caches. Never call mod:set here (per-frame cost).
+        -- _puid_cache[self] = puid lets the hover loop look up the key without
+        -- calling any native methods on player_info (which can crash natively
+        -- for offline/cross-platform players when called every render frame).
+        local puid = get_player_key(self)
+        if puid then
+            _puid_cache[self]  = puid
+            _raw_names[puid]   = name
         end
 
         if self:is_own_player() then return name, color_override end
-        if not puid or puid == "" then return name, color_override end
+        if not puid then return name, color_override end
 
         local note = get_note(puid)
         if not note or note == "" then return name, color_override end
@@ -249,9 +298,9 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
 
 mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
     function(func, self, parent, player_info, menu_items, num_menu_items, ...)
-        local puid = player_info:platform_user_id()
+        local puid = get_player_key(player_info)
 
-        if not player_info:is_own_player() and puid and puid ~= "" then
+        if not player_info:is_own_player() and puid then
             mod._popup_puid = puid
 
             local note    = get_note(puid)
@@ -284,8 +333,11 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
 
 mod:hook_safe(CLASS.SocialMenuRosterView, "init", function(self, ...)
     function self:cb_pn_edit_note(player_info)
-        mod._editing_puid = player_info:platform_user_id()
+        mod._editing_puid = get_player_key(player_info)
         mod._editing_name = player_info:user_display_name(true, true)
+        if mod._editing_puid then
+            save_player_name(mod._editing_puid, mod._editing_name)
+        end
         mod:echo(string.format(STR_SELECTED, mod._editing_name or "player"))
     end
 end)
@@ -303,6 +355,7 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
     mod._hover_tx         = nil
     mod._hover_ty         = nil
     mod._hover_dyn_h      = nil
+    _puid_cache = {}
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -358,9 +411,11 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                 local wh = (cs and cs[2]) or 80
 
                 if mx >= wx and mx <= wx + ww and my >= wy and my <= wy + wh then
-                    local pi = w.content and w.content.player_info
-                    if pi and not pi:is_own_player() then
-                        local puid = pi:platform_user_id()
+                    -- Use _puid_cache to avoid any native method calls on player_info
+                    -- during the render loop. is_own_player is a plain bool in content.
+                    local pi   = w.content and w.content.player_info
+                    local puid = pi and not w.content.is_own_player and _puid_cache[pi]
+                    if puid then
                         local note = get_note(puid)
                         if note then
                             local dyn_h = compute_tooltip_height(note)
@@ -376,7 +431,7 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                             -- by the roster blueprint calling user_display_name() through
                             -- Hook 1, so it already contains " · note" when inline is on.
                             mod._hovered_note     = note
-                            mod._hovered_raw_name = _raw_names[puid]
+                            mod._hovered_raw_name = get_cached_name(puid)
                                                  or (w.content and w.content.account_name)
                                                  or "Player"
                             mod._hover_tx         = tx
@@ -458,6 +513,93 @@ mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_ser
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 7: Hover detection in GroupFinderView._draw_widgets (Party Finder)
+--
+-- GroupFinderView has NO offscreen renderer — widgets are drawn in screen space.
+-- The game itself uses grid:hovered_grid_index() + grid:widget_by_index() for
+-- hover detection in this same view (group_finder_view.lua:777), so we do the
+-- same rather than using geometric bounds or hotspot.is_hover.
+--
+-- account_id (Fatshark backend ID) → platform_user_id via social data service.
+-- If the requesting player is not in the social cache (non-friend), puid will
+-- be nil and we silently skip (no note to show).
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:hook(CLASS.GroupFinderView, "_draw_widgets",
+    function(func, self, dt, t, input_service, ui_renderer, render_settings)
+        func(self, dt, t, input_service, ui_renderer, render_settings)
+
+        -- Reset hover state each frame
+        mod._hovered_note     = nil
+        mod._hovered_raw_name = nil
+        mod._hover_tx         = nil
+        mod._hover_ty         = nil
+        mod._hover_dyn_h      = nil
+
+        local grid = self._player_request_grid
+        if not grid then return end
+
+        -- Use the same hover API the game uses in this view (no offscreen renderer)
+        local hovered_idx = grid:hovered_grid_index()
+        if not hovered_idx then return end
+
+        local widget = grid:widget_by_index(hovered_idx)
+        if not widget then return end
+
+        local content    = widget.content
+        local element    = content and content.element
+        local account_id = element and element.account_id
+        if not account_id then return end
+
+        local social = Managers.data_service and Managers.data_service.social
+        if not social then return end
+
+        local player_info = social:get_player_info_by_account_id(account_id)
+        if not player_info then return end
+
+        local puid = get_player_key(player_info)
+        local note = get_note(puid)
+        if not note then return end
+
+        local cursor_pos = input_service and input_service:get("cursor")
+        if not cursor_pos then return end
+
+        local inv   = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.inverse_scale or 1
+        local sw    = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.width  * inv or 1920
+        local sh    = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.height * inv or 1080
+        local mx    = Vector3.x(cursor_pos) * inv
+        local my    = Vector3.y(cursor_pos) * inv
+        local dyn_h = compute_tooltip_height(note)
+
+        -- Position tooltip to the left of cursor (player_request_grid is on the right)
+        local tx = mx - TT_W - 20
+        if tx < 10 then tx = mx + 20 end
+        local ty = math.max(my - dyn_h / 2, 10)
+        ty = math.min(ty, sh - dyn_h - 10)
+
+        mod._hovered_note     = note
+        mod._hovered_raw_name = get_cached_name(puid)
+                             or player_info:user_display_name()
+                             or "Player"
+        mod._hover_tx         = tx
+        mod._hover_ty         = ty
+        mod._hover_dyn_h      = dyn_h
+    end
+)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 8: Cleanup on GroupFinderView close
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
+    mod._hovered_note     = nil
+    mod._hovered_raw_name = nil
+    mod._hover_tx         = nil
+    mod._hover_ty         = nil
+    mod._hover_dyn_h      = nil
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- COMMAND: /note <text>
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -493,7 +635,8 @@ mod:command("pn_notes", "List all saved PlayerNotes.", function()
     local count = 0
     for k, v in pairs(notes) do
         count = count + 1
-        mod:echo(string.format("[%d] %s → %s", count, tostring(k), tostring(v)))
+        local display_name = get_cached_name(k) or k
+        mod:echo(string.format("[%d] %s → %s", count, display_name, tostring(v)))
     end
     if count == 0 then mod:echo("No notes saved yet.") end
 end)
@@ -502,6 +645,25 @@ end)
 -- LIFECYCLE
 -- ──────────────────────────────────────────────────────────────────────────────
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- COMMAND: /pn_notes_delete_all — wipe all notes and the name cache
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the name cache.", function()
+    -- Use nil (not {}) to remove the key entirely — avoids passing an empty
+    -- table to the native SJSON serializer, which can cause a silent crash.
+    mod:set("player_notes", nil)
+    mod:set("player_names", nil)
+    -- Replace in-memory caches with fresh tables (safer than iterating + nil-ing)
+    _raw_names  = {}
+    _puid_cache = {}
+    mod:echo("[PlayerNotes] All notes and name cache cleared.")
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- LIFECYCLE
+-- ──────────────────────────────────────────────────────────────────────────────
+
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.4 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.10 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end
