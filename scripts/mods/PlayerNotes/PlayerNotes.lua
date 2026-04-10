@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.9
+    Version: 1.9.10
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -246,19 +246,26 @@ end
 -- because the roster blueprint calls user_display_name() through this hook.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local _raw_names = {}  -- puid → raw platform display name (no note appended)
+local _raw_names   = {}  -- puid → raw platform display name (no note appended)
+local _puid_cache  = {}  -- player_info object reference → puid
+-- _puid_cache avoids calling platform_user_id()/account_id() in the per-frame
+-- hover loop. get_player_key() may trigger a native C++ exception on
+-- offline/cross-platform player_info objects when called every frame (pcall
+-- does not catch native exceptions). Populated once in Hook 1 which runs in a
+-- safe context (roster blueprint calls, not bare render-loop iteration).
 
 mod:hook(CLASS.PlayerInfo, "user_display_name",
     function(func, self, ...)
         local name, color_override = func(self, ...)
 
-        -- Cache raw name in memory only — never call mod:set here.
-        -- This hook fires for every player rendered in the roster every frame;
-        -- mod:set inside a per-frame hook causes excessive table cloning (DMF
-        -- clones on every get/set) which can crash the native SJSON serializer.
+        -- Populate puid and name caches. Never call mod:set here (per-frame cost).
+        -- _puid_cache[self] = puid lets the hover loop look up the key without
+        -- calling any native methods on player_info (which can crash natively
+        -- for offline/cross-platform players when called every render frame).
         local puid = get_player_key(self)
         if puid then
-            _raw_names[puid] = name
+            _puid_cache[self]  = puid
+            _raw_names[puid]   = name
         end
 
         if self:is_own_player() then return name, color_override end
@@ -341,6 +348,7 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
     mod._hover_tx         = nil
     mod._hover_ty         = nil
     mod._hover_dyn_h      = nil
+    _puid_cache = {}
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -396,9 +404,11 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                 local wh = (cs and cs[2]) or 80
 
                 if mx >= wx and mx <= wx + ww and my >= wy and my <= wy + wh then
-                    local pi = w.content and w.content.player_info
-                    if pi and not pi:is_own_player() then
-                        local puid = get_player_key(pi)
+                    -- Use _puid_cache to avoid any native method calls on player_info
+                    -- during the render loop. is_own_player is a plain bool in content.
+                    local pi   = w.content and w.content.player_info
+                    local puid = pi and not w.content.is_own_player and _puid_cache[pi]
+                    if puid then
                         local note = get_note(puid)
                         if note then
                             local dyn_h = compute_tooltip_height(note)
@@ -638,7 +648,8 @@ mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the n
     mod:set("player_notes", nil)
     mod:set("player_names", nil)
     -- Replace in-memory caches with fresh tables (safer than iterating + nil-ing)
-    _raw_names = {}
+    _raw_names  = {}
+    _puid_cache = {}
     mod:echo("[PlayerNotes] All notes and name cache cleared.")
 end)
 
@@ -647,5 +658,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.9 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v1.9.10 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end
