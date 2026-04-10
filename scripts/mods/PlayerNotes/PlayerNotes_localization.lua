@@ -63,4 +63,11 @@ return {
     opt_show_tooltip_title_description = {
         en = "Shows the full note in a floating tooltip next to the hovered player row.",
     },
+
+    opt_open_save_folder_title = {
+        en = "Open save folder in Explorer (toggle to open)",
+    },
+    opt_open_save_folder_tooltip = {
+        en = "Toggle this checkbox to open the Darktide save folder in Windows Explorer. Your notes are stored inside user_settings.config in that folder. The checkbox resets itself automatically.",
+    },
 }

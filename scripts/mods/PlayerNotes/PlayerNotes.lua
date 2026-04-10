@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.6
+    Version: 1.9.7
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -628,6 +628,34 @@ end)
 -- LIFECYCLE
 -- ──────────────────────────────────────────────────────────────────────────────
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- SETTING CHANGED: handle the "open_save_folder" checkbox pseudo-button
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod.on_setting_changed = function(setting_id)
+    if setting_id ~= "open_save_folder" then return end
+
+    -- Reset the checkbox immediately so it behaves like a button
+    mod:set("open_save_folder", false, true)
+
+    local _os = Mods and Mods.lua and Mods.lua.os
+    if not _os then
+        mod:echo("[PlayerNotes] Cannot open folder: Mods.lua.os unavailable.")
+        return
+    end
+    local appdata = _os.getenv("APPDATA")
+    if not appdata or appdata == "" then
+        mod:echo("[PlayerNotes] Cannot find %%APPDATA%% directory.")
+        return
+    end
+    local path = appdata .. "\\Fatshark\\Darktide"
+    _os.execute('explorer.exe "' .. path .. '"')
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- LIFECYCLE
+-- ──────────────────────────────────────────────────────────────────────────────
+
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.6 Loaded. /note /note_clear /pn_notes")
+    mod:echo("[PlayerNotes] v1.9.7 Loaded. /note /note_clear /pn_notes")
 end
