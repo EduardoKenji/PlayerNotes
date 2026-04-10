@@ -1,7 +1,7 @@
 return {
     name         = "PlayerNotes",
     description  = "Add persistent notes to any player in the Social panel or Party Finder. Hover a player to see their note.",
-    version      = "1.9.10",
+    version      = "2.0.0",
     is_togglable = true,
     options = {
         widgets = {
@@ -23,6 +23,13 @@ return {
                 default_value = true,
                 title         = "opt_show_tooltip_title",
             },
+            {
+                setting_id    = "show_world_notes",
+                type          = "checkbox",
+                default_value = true,
+                title         = "opt_show_world_notes_title",
+            },
         },
     },
 }
+
