@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 1.9.11
+    Version: 1.9.12
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -234,51 +234,79 @@ local _pn_toptext_def = UIWidget.create_definition({
 -- ──────────────────────────────────────────────────────────────────────────────
 -- WORLD MARKER TEMPLATE (inline — no require path needed)
 -- Injected into HudElementWorldMarkers._marker_templates via Hook 9.
+--
+-- Only shown within 15 world-units (~15 m) so drift from 3D→2D projection
+-- at long range is never visible and nearby-only is less cluttered.
+-- The widget is a semi-transparent tooltip box (border + fill + text).
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local _pn_world_note_size = { 500, 24 }
+local _pn_world_note_size = { 280, 30 }
 
 local _pn_world_marker_template = {
     name              = "pn_note",
     unit_node         = "j_head",
     position_offset   = { 0, 0, 0.4 },
     check_line_of_sight = false,
-    max_distance      = 100,
+    max_distance      = 15,
     screen_clamp      = false,
     start_layer       = 302,
     size              = _pn_world_note_size,
     scale_settings = {
-        distance_max = 20,
-        distance_min = 10,
-        scale_from   = 0.8,
+        distance_max = 15,
+        distance_min = 5,
+        scale_from   = 0.7,
         scale_to     = 1,
     },
     fade_settings = {
         default_fade    = 1,
         fade_from       = 0,
         fade_to         = 1,
-        distance_max    = 100,
-        distance_min    = 50,
+        distance_max    = 15,
+        distance_min    = 8,
         easing_function = math.ease_exp,
     },
     create_widget_defintion = function(tmpl, scenegraph_id)
+        local W   = _pn_world_note_size[1]
+        local H   = _pn_world_note_size[2]
+        local PAD = 6
         return UIWidget.create_definition({
+            -- Outer border (semi-transparent warm accent)
+            {
+                pass_type = "rect",
+                style_id  = "pn_note_border",
+                style     = {
+                    color  = { 70, 200, 160, 80 },
+                    offset = { -2, -2, 0 },
+                    size   = { W + 4, H + 4 },
+                },
+            },
+            -- Dark fill (semi-transparent)
+            {
+                pass_type = "rect",
+                style_id  = "pn_note_bg",
+                style     = {
+                    color  = { 80, 8, 8, 8 },
+                    offset = { 0, 0, 1 },
+                    size   = { W, H },
+                },
+            },
+            -- Note text: NO vertical_alignment/horizontal_alignment so all passes
+            -- share the same origin (0,0) and the text renders inside the box.
             {
                 pass_type = "text",
                 style_id  = "pn_note_text",
                 value_id  = "pn_note_text",
                 value     = "",
                 style     = {
-                    horizontal_alignment      = "left",
-                    text_horizontal_alignment = "left",
+                    text_horizontal_alignment = "center",
                     text_vertical_alignment   = "center",
-                    vertical_alignment        = "center",
+                    word_wrap                 = true,
                     offset                    = { 0, 0, 2 },
                     font_type                 = "proxima_nova_bold",
-                    font_size                 = 18,
-                    default_font_size         = 18,
-                    text_color                = { 255, 220, 200, 150 },
-                    size                      = _pn_world_note_size,
+                    font_size                 = 16,
+                    default_font_size         = 16,
+                    text_color                = { 130, 230, 210, 160 },
+                    size                      = { W, H },
                 },
             },
         }, scenegraph_id)
@@ -291,7 +319,31 @@ local _pn_world_marker_template = {
         -- nothing to clean up
     end,
     update_function = function(parent, ui_renderer, widget, marker, tmpl, dt, t)
-        widget.offset[1] = widget.offset[1] + (200 * marker.scale + 15)
+        local text  = widget.content.pn_note_text or ""
+        local W_MAX = _pn_world_note_size[1]   -- 280
+
+        -- Estimate rendered width (~8px per char for proxima_nova_bold @16)
+        local est_w = math.max(60, math.min(W_MAX, #text * 8 + 20))
+
+        -- Estimate height from line count (word_wrap active, ~8px per char)
+        local chars_per_line = math.max(1, math.floor(est_w / 8))
+        local num_lines      = math.max(1, math.ceil(#text / chars_per_line))
+        local new_h          = math.max(30, num_lines * 20 + 10)
+
+        -- Resize all box passes to match note content
+        widget.style.pn_note_border.size[1] = est_w + 4
+        widget.style.pn_note_border.size[2] = new_h + 4
+        widget.style.pn_note_bg.size[1]     = est_w
+        widget.style.pn_note_bg.size[2]     = new_h
+        widget.style.pn_note_text.size[1]   = est_w
+        widget.style.pn_note_text.size[2]   = new_h
+
+        -- Center box horizontally on the projected anchor (matches nameplate center)
+        widget.offset[1] = widget.offset[1] - est_w * 0.5
+
+        -- Place box above the nameplate: push up by box height + fixed gap.
+        -- Tune the 50 constant if the box clips the nameplate or floats too high.
+        widget.offset[2] = widget.offset[2] - new_h - 30
     end,
 }
 
@@ -772,5 +824,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v1.9.11 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v1.9.12 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end

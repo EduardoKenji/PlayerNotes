@@ -1,7 +1,7 @@
 return {
     name         = "PlayerNotes",
     description  = "Add persistent notes to any player in the Social panel or Party Finder. Hover a player to see their note.",
-    version      = "1.9.11",
+    version      = "1.9.12",
     is_togglable = true,
     options = {
         widgets = {
