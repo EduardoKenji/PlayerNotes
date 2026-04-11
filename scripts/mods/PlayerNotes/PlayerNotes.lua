@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.0.0
+    Version: 2.0.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -141,15 +141,26 @@ local function save_note(puid, text, display_name)
         return
     end
     local notes = get_notes()
-    
+
+    -- Sync to all known IDs for this name so online/offline IDs never diverge.
+    -- (Xbox friends get a Fatshark UUID when offline and their Xbox XUID when online.)
+    local function sync_all_ids(value)
+        notes[puid] = value
+        if display_name and display_name ~= "" then
+            local id_list = get_name_to_ids()[display_name] or {}
+            for _, id in ipairs(id_list) do
+                notes[id] = value
+            end
+        end
+    end
+
     if text and text ~= "" then
-        notes[puid] = text
-        -- Update name-to-IDs mapping for future lookups
+        sync_all_ids(text)
         update_name_to_ids(display_name, puid)
     else
-        notes[puid] = nil
+        sync_all_ids(nil)
     end
-    
+
     mod:set("player_notes", notes)
 end
 
@@ -925,5 +936,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.0.0 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.0.1 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end
