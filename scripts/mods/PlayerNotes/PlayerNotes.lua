@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.2.1
+    Version: 2.3.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -1074,6 +1074,56 @@ mod:command("set_note_clear", "Clear the note for a player by player tag or char
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- COMMAND: /delete_note <identifier>
+--
+-- Removes the note for a player. The identifier can be:
+--   • A platform player tag  — e.g. Potty#1031  or  Ayas1260
+--   • A character name       — e.g. KimJongDois  or  OldWitch
+--
+-- Lookup order:
+--   1. name_to_ids map   (player tag exact match)
+--   2. char_to_player map (character name), where mission context beats hub
+--      and more recently seen characters beat older ones within the same context.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:command("delete_note", "Delete the note for a player by player tag or character name.", function(...)
+    local args = { ... }
+    if #args == 0 then
+        mod:echo("Usage: /delete_note <player_tag_or_character_name>")
+        mod:echo("  e.g. /delete_note Potty#1031")
+        mod:echo("       /delete_note KimJongDois")
+        return
+    end
+
+    local identifier                    = args[1]
+    local puid, display_name, match_type = resolve_identifier(identifier)
+
+    if not puid then
+        mod:echo(string.format("[PlayerNotes] Unknown: '%s'.", identifier))
+        mod:echo("Tip: right-click the player in Social panel first, or use their full tag (e.g. Potty#1031).")
+        return
+    end
+
+    local existing_note = get_note(puid, display_name)
+    if not existing_note or existing_note == "" then
+        if match_type == "character" then
+            mod:echo(string.format("[PlayerNotes] No note found for %s (character of %s).", identifier, display_name or "?"))
+        else
+            mod:echo(string.format("[PlayerNotes] No note found for %s.", display_name or identifier))
+        end
+        return
+    end
+
+    save_note(puid, nil, display_name)
+
+    if match_type == "character" then
+        mod:echo(string.format("Note deleted for %s (character of %s).", identifier, display_name or "?"))
+    else
+        mod:echo(string.format("Note deleted for %s.", display_name or identifier))
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- COMMAND: /pn_chars — list the character-name → player-tag map
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -1115,5 +1165,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.2.1 Loaded. /note /note_clear /set_note /set_note_clear /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.3.0 Loaded. /note /note_clear /set_note /set_note_clear /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
