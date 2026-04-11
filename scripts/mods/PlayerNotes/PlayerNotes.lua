@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.4.0
+    Version: 2.5.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -53,6 +53,14 @@ local STR_SELECTED   = "Selected %s — type /note [text] to save."
 local STR_SAVED      = "Note saved for %s."
 local STR_NONE_SEL   = "Click 'Add Note' on a player first."
 local STR_USAGE_NOTE = "Usage: /note [your note text]"
+
+-- char_to_player LRU eviction cap.
+-- When the table reaches CHAR_CACHE_MAX, a batch eviction trims it to CHAR_CACHE_TRIM_TO.
+-- Batch eviction amortizes the sort cost: one sort every ~50 new characters instead of
+-- one per character after the cap. Hub-context entries are evicted before mission-context
+-- entries of the same age so hard-earned mission observations survive longer.
+local CHAR_CACHE_MAX     = 250
+local CHAR_CACHE_TRIM_TO = 200
 
 -- Tooltip dimensions (Alternative 3)
 -- Height is computed dynamically per note; TT_H_MIN is the floor.
@@ -248,6 +256,39 @@ end
 
 local function get_char_to_player() return _char_to_player_cache end
 
+-- Evict oldest entries from _char_to_player_cache when it exceeds CHAR_CACHE_MAX.
+-- Sort key: last_seen ASC (oldest first); hub entries are evicted before mission
+-- entries of equal age so hard-earned mission observations survive longer.
+-- Only called when a new char_name key is about to be inserted.
+local function evict_oldest_char_entries()
+    local entries = {}
+    for char_name, entry in pairs(_char_to_player_cache) do
+        entries[#entries + 1] = { key = char_name, entry = entry }
+    end
+    local count = #entries
+    if count < CHAR_CACHE_MAX then return end
+
+    table.sort(entries, function(a, b)
+        local at = a.entry.last_seen or 0
+        local bt = b.entry.last_seen or 0
+        if at == bt then
+            -- hub before mission: hub=true when context=="hub"
+            local a_hub = (a.entry.context == "hub")
+            local b_hub = (b.entry.context == "hub")
+            if a_hub ~= b_hub then return a_hub end
+        end
+        return at < bt
+    end)
+
+    local to_remove = count - CHAR_CACHE_TRIM_TO  -- batch trim: drop to TRIM_TO, not just -1
+    for i = 1, to_remove do
+        local char_name = entries[i].key
+        local puid      = entries[i].entry.puid or ""
+        _char_to_player_cache[char_name] = nil
+        _known_chars[char_name .. "\0" .. puid] = nil
+    end
+end
+
 local function update_char_to_player(char_name, puid, display_name, context)
     if not char_name or char_name == "" then return end
     if not puid or puid == "" then return end
@@ -261,6 +302,11 @@ local function update_char_to_player(char_name, puid, display_name, context)
     if existing and existing.context == "mission" and context == "hub" then
         _known_chars[cache_key] = true  -- mark so we don't keep retrying
         return
+    end
+
+    -- Evict oldest entries if this is a new key and the table is at capacity.
+    if not existing then
+        evict_oldest_char_entries()
     end
 
     _char_to_player_cache[char_name] = {
@@ -1141,5 +1187,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.4.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.5.1 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
