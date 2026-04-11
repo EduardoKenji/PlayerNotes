@@ -1,20 +1,24 @@
 # PlayerNotes
 
-**Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel.
-
-![In-game screenshot](https://github.com/EduardoKenji/PlayerNotes/blob/main/screenshot.png?raw=true)
+**Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel, Party Finder, and in-world above player nameplates.
 
 ---
 
 ## Features
 
 - **Right-click to annotate** — right-click any friend → **Add Note** / **Edit Note**
-- **Inline display** — notes appear directly in every friend row (e.g. `Arthuralo64 · good psyker for havoc 40`)
-- **Hover tooltip** — hovering a friend shows the full note in a clean dark overlay
+- **Three display modes** (all independently togglable via F4 Mod Options):
+  - **Inline notes** — append note preview directly to friend name (e.g. `Arthuralo64 · good psyker for havoc 40`)
+  - **Top-bar** — shows "Name — note" in a small bar at top-left when hovering
+  - **Tooltip** — floating box near the hovered player row, dynamically sized to fit the text
+- **World notes** — notes appear above player nameplates in-game (within ~15m range)
+- **Party Finder support** — hover tooltips work for join requesters in Group Finder
 - **Persistent** — notes survive game restarts (saved via DMF `mod:get/set`)
-- **Platform-stable keys** — keyed by `platform_user_id` (Steam/Xbox/PSN ID), not display name — survives name changes
+- **Platform-stable keys** — keyed by `platform_user_id` (Steam/Xbox/PSN ID) with fallback to `account_id` for cross-platform offline friends
 - **Offline-friend support** — notes work even when the friend is offline
-- **Chat commands** — `/note <text>` to save, `/note_clear` to delete
+- **Name cache** — player names persisted so `/pn_notes` shows readable names after restarts
+- **ID mapping** — automatically handles players with multiple IDs (e.g., Xbox players with different online/offline IDs)
+- **Chat commands** — `/note <text>` to save, `/note_clear` to delete, `/pn_notes` to list all
 
 ---
 
@@ -43,14 +47,14 @@
 ### Adding or editing a note
 
 1. Open the **Social** panel.
-2. Right-click a friend → click **Add Note** (or **Edit Note** if one already exists).
+2. Right-click a friend → click **Add Note** (or shows `[Note] preview...` if one exists).
 3. Type `/note <your note here>` in chat and press Enter.
 
 ```
 /note good psyker for havoc 40 runs
 ```
 
-The button label will update to **Edit Note** and the note appears inline in the friend list row.
+The note is now saved and will appear according to your display settings (inline, tooltip, top-bar, world notes).
 
 ### Clearing a note
 
@@ -58,7 +62,32 @@ The button label will update to **Edit Note** and the note appears inline in the
 /note_clear
 ```
 
-Click **Edit Note** on the friend first, then run `/note_clear`.
+Click **Add Note** on the friend first to select them, then run `/note_clear`.
+
+### Listing all notes
+
+```
+/pn_notes
+```
+
+Shows all saved notes with player names (if cached) or their platform IDs.
+
+### Deleting all notes
+
+```
+/pn_notes_delete_all
+```
+
+Wipes ALL saved notes and the name cache. Use with caution!
+
+### Mod Options (F4 in-game)
+
+Navigate to **PlayerNotes** in the mod options menu to toggle:
+
+- **Show inline notes** — append note preview to friend names (disabled by default)
+- **Show top bar** — name + note bar at top-left when hovering (enabled by default)
+- **Show tooltip** — floating tooltip box near hovered player (enabled by default)
+- **Show world notes** — notes above player nameplates in-game (enabled by default)
 
 ---
 
@@ -66,14 +95,26 @@ Click **Edit Note** on the friend first, then run `/note_clear`.
 
 | Command | Description |
 |---|---|
-| `/note <text>` | Save a note for the last right-clicked friend |
-| `/note_clear` | Delete the note for the last right-clicked friend |
+| `/note <text>` | Save a note for the last selected player |
+| `/note_clear` | Delete the note for the last selected player |
+| `/pn_notes` | List all saved notes with player names/IDs |
+| `/pn_notes_delete_all` | Wipe ALL notes and name cache (use with caution) |
 
 ---
 
 ## Compatibility
 
-Tested on the current live version of Darktide. Should be compatible with any mod that does not also hook `ViewElementPlayerSocialPopup._set_player_info` or `SocialMenuRosterView.formatted_character_name`.
+Tested on the current live version of Darktide. Should be compatible with most mods.
+
+**Hooks used:**
+- `PlayerInfo.user_display_name` — for inline note display
+- `ViewElementPlayerSocialPopup._set_player_info` — for right-click menu injection
+- `SocialMenuRosterView._draw_widgets` — for hover detection in Social panel
+- `GroupFinderView._draw_widgets` — for Party Finder hover tooltips
+- `UIConstantElements.draw` — for overlay rendering (tooltip + top-bar)
+- `HudElementWorldMarkers.init` — for world note template injection
+
+May conflict with mods that hook the same methods or modify social/player name rendering.
 
 ---
 

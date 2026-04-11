@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.0.0
+    Version: 2.0.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -102,19 +102,84 @@ local function get_notes()
     return mod:get("player_notes") or {}
 end
 
-local function save_note(puid, text)
+-- Name-to-IDs mapping: display_name → {id1, id2, ...}
+-- This handles players with multiple IDs (e.g., online vs offline Xbox players)
+local function get_name_to_ids()
+    return mod:get("name_to_ids") or {}
+end
+
+local function update_name_to_ids(display_name, puid)
+    if not display_name or display_name == "" or not puid or puid == "" then return end
+    local name_to_ids = get_name_to_ids()
+    local id_list = name_to_ids[display_name] or {}
+    -- Avoid duplicates
+    for _, id in ipairs(id_list) do
+        if id == puid then return end
+    end
+    table.insert(id_list, puid)
+    name_to_ids[display_name] = id_list
+    mod:set("name_to_ids", name_to_ids)
+end
+
+-- Look up note by display name, checking all associated IDs
+local function get_note_by_name(display_name)
+    if not display_name or display_name == "" then return nil, nil end
+    local name_to_ids = get_name_to_ids()
+    local id_list = name_to_ids[display_name]
+    if not id_list or #id_list == 0 then return nil, nil end
+    local notes = get_notes()
+    for _, id in ipairs(id_list) do
+        local note = notes[id]
+        if note and note ~= "" then return note, id end
+    end
+    return nil, nil
+end
+
+local function save_note(puid, text, display_name)
     if not puid or puid == "" then
         mod:echo("[PlayerNotes] ERROR: cannot save note — player key is nil/empty.")
         return
     end
     local notes = get_notes()
-    notes[puid] = (text and text ~= "") and text or nil
+
+    -- Sync to all known IDs for this name so online/offline IDs never diverge.
+    -- (Xbox friends get a Fatshark UUID when offline and their Xbox XUID when online.)
+    local function sync_all_ids(value)
+        notes[puid] = value
+        if display_name and display_name ~= "" then
+            local id_list = get_name_to_ids()[display_name] or {}
+            for _, id in ipairs(id_list) do
+                notes[id] = value
+            end
+        end
+    end
+
+    if text and text ~= "" then
+        sync_all_ids(text)
+        update_name_to_ids(display_name, puid)
+    else
+        sync_all_ids(nil)
+    end
+
     mod:set("player_notes", notes)
 end
 
-local function get_note(puid)
-    if not puid or puid == "" then return nil end
-    return get_notes()[puid]
+-- Try to get note by ID first, then fall back to name-based lookup
+local function get_note(puid, display_name)
+    local notes = get_notes()
+    
+    -- Try direct ID lookup first
+    if puid and puid ~= "" then
+        local note = notes[puid]
+        if note and note ~= "" then return note end
+    end
+    
+    -- Fall back to name-based lookup (handles ID switching)
+    if display_name and display_name ~= "" then
+        return get_note_by_name(display_name)
+    end
+    
+    return nil
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -134,6 +199,7 @@ end
 -- ──────────────────────────────────────────────────────────────────────────────
 -- NAME CACHE
 -- Persisted so /pn_notes can show readable names even after a restart.
+-- Also maintains bidirectional mapping: id→name AND name→[list of ids]
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local function save_player_name(key, name)
@@ -142,11 +208,18 @@ local function save_player_name(key, name)
     if names[key] == name then return end
     names[key] = name
     mod:set("player_names", names)
+    _raw_names[key] = name
 end
 
 local function get_cached_name(key)
     if not key or key == "" then return nil end
     return _raw_names[key] or (mod:get("player_names") or {})[key]
+end
+
+-- Get all IDs associated with a display name
+local function get_ids_for_name(display_name)
+    if not display_name or display_name == "" then return nil end
+    return get_name_to_ids()[display_name]
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -400,9 +473,15 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
         end
 
         if self:is_own_player() then return name, color_override end
-        if not puid then return name, color_override end
 
-        local note = get_note(puid)
+        -- Try to get note using both puid and display name for ID mapping support
+        local note = nil
+        if puid then
+            note = get_note(puid, name)
+        else
+            note = get_note_by_name(name)
+        end
+        
         if not note or note == "" then return name, color_override end
 
         if not mod:get("show_inline") then
@@ -423,11 +502,13 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
 mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
     function(func, self, parent, player_info, menu_items, num_menu_items, ...)
         local puid = get_player_key(player_info)
+        local display_name = player_info:user_display_name(true, true)
 
         if not player_info:is_own_player() and puid then
             mod._popup_puid = puid
 
-            local note    = get_note(puid)
+            -- Get note using both ID and name for mapping support
+            local note    = get_note(puid, display_name)
             local preview = note and (#note > 40 and note:sub(1, 40) .. "..." or note)
             local label   = note and ("[Note] " .. preview) or STR_BTN_ADD
 
@@ -539,29 +620,34 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                     -- during the render loop. is_own_player is a plain bool in content.
                     local pi   = w.content and w.content.player_info
                     local puid = pi and not w.content.is_own_player and _puid_cache[pi]
+                    
+                    -- Get raw name from cache or widget content
+                    local raw_name = get_cached_name(puid)
+                        or (w.content and w.content.account_name)
+                        or "Player"
+                    
+                    -- Try to get note using both puid and display name for ID mapping support
+                    local note = nil
                     if puid then
-                        local note = get_note(puid)
-                        if note then
-                            local dyn_h = compute_tooltip_height(note)
+                        note = get_note(puid, raw_name)
+                    else
+                        note = get_note_by_name(raw_name)
+                    end
+                    
+                    if note then
+                        local dyn_h = compute_tooltip_height(note)
 
-                            -- Position tooltip to the right; flip left if off-screen
-                            local tx = wx + ww + 15
-                            if tx + TT_W > sw then tx = wx - TT_W - 15 end
-                            local ty = math.max(wy, 10)
-                            ty = math.min(ty, sh - dyn_h - 10)
+                        -- Position tooltip to the right; flip left if off-screen
+                        local tx = wx + ww + 15
+                        if tx + TT_W > sw then tx = wx - TT_W - 15 end
+                        local ty = math.max(wy, 10)
+                        ty = math.min(ty, sh - dyn_h - 10)
 
-                            -- Use _raw_names cache (populated by Hook 1) to get the
-                            -- unmodified platform name. w.content.account_name is set
-                            -- by the roster blueprint calling user_display_name() through
-                            -- Hook 1, so it already contains " · note" when inline is on.
-                            mod._hovered_note     = note
-                            mod._hovered_raw_name = get_cached_name(puid)
-                                                 or (w.content and w.content.account_name)
-                                                 or "Player"
-                            mod._hover_tx         = tx
-                            mod._hover_ty         = ty
-                            mod._hover_dyn_h      = dyn_h
-                        end
+                        mod._hovered_note     = note
+                        mod._hovered_raw_name = raw_name
+                        mod._hover_tx         = tx
+                        mod._hover_ty         = ty
+                        mod._hover_dyn_h      = dyn_h
                     end
                     break
                 end
@@ -732,7 +818,8 @@ mod:command("note", "Save a note for the last selected player.", function(...)
     if #args == 0 then mod:echo(STR_USAGE_NOTE); return end
     if not mod._editing_puid then mod:echo(STR_NONE_SEL); return end
     local text = table.concat(args, " ")
-    save_note(mod._editing_puid, text)
+    -- Pass display_name to save_note for ID mapping support
+    save_note(mod._editing_puid, text, mod._editing_name)
     mod:echo(string.format(STR_SAVED, mod._editing_name or "player"))
     mod._editing_puid = nil
     mod._editing_name = nil
@@ -744,7 +831,8 @@ end)
 
 mod:command("note_clear", "Clear the note for the last selected player.", function()
     if not mod._editing_puid then mod:echo(STR_NONE_SEL); return end
-    save_note(mod._editing_puid, nil)
+    -- Pass display_name to save_note for ID mapping support
+    save_note(mod._editing_puid, nil, mod._editing_name)
     mod:echo(string.format(STR_CLEARED, mod._editing_name or "player"))
     mod._editing_puid = nil
     mod._editing_name = nil
@@ -756,12 +844,35 @@ end)
 
 mod:command("pn_notes", "List all saved PlayerNotes.", function()
     local notes = get_notes()
-    local count = 0
-    for k, v in pairs(notes) do
-        count = count + 1
-        local display_name = get_cached_name(k) or k
-        mod:echo(string.format("[%d] %s → %s", count, display_name, tostring(v)))
+    local name_to_ids = get_name_to_ids()
+    
+    -- Group notes by player name (handles multiple IDs per player)
+    local grouped_notes = {}
+    for puid, note in pairs(notes) do
+        if note and note ~= "" then
+            local display_name = get_cached_name(puid) or puid
+            if not grouped_notes[display_name] then
+                grouped_notes[display_name] = {note = note, ids = {puid}}
+            else
+                -- Check if this is a different note for the same name
+                if note ~= grouped_notes[display_name].note then
+                    table.insert(grouped_notes[display_name].ids, puid)
+                end
+            end
+        end
     end
+    
+    -- Display grouped notes
+    local count = 0
+    for display_name, data in pairs(grouped_notes) do
+        count = count + 1
+        local id_str = table.concat(data.ids, ", ")
+        mod:echo(string.format("[%d] %s → %s", count, display_name, data.note))
+        if #data.ids > 1 then
+            mod:echo(string.format("    IDs: %s", id_str))
+        end
+    end
+    
     if count == 0 then mod:echo("No notes saved yet.") end
 end)
 
@@ -813,6 +924,7 @@ mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the n
     -- table to the native SJSON serializer, which can cause a silent crash.
     mod:set("player_notes", nil)
     mod:set("player_names", nil)
+    mod:set("name_to_ids", nil)  -- Clear ID mapping data
     -- Replace in-memory caches with fresh tables (safer than iterating + nil-ing)
     _raw_names  = {}
     _puid_cache = {}
@@ -824,5 +936,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.0.0 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.0.1 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
 end
