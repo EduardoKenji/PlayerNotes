@@ -1008,7 +1008,7 @@ mod:register_hud_element({
 -- mission so the mod can build the mapping.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:command("set_note", "/set_note <player_tag_or_character_name> <note>", function(...)
+mod:command("set_note", "<player_tag_or_character_name> <note> | Set a note for a player by their player tag or character name.", function(...)
     local args = { ... }
     if #args < 2 then
         mod:echo("Usage: /set_note <player_tag_or_character_name> <note text>")
@@ -1049,7 +1049,7 @@ end)
 --      and more recently seen characters beat older ones within the same context.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:command("delete_note", "/delete_note <player_tag_or_character_name>", function(...)
+mod:command("delete_note", "<player_tag_or_character_name> | Delete the note for a player by their player tag or character name.", function(...)
     local args = { ... }
     if #args == 0 then
         mod:echo("Usage: /delete_note <player_tag_or_character_name>")
