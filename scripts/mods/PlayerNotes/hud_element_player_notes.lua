@@ -26,9 +26,10 @@ local function _is_in_mission()
 end
 
 HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
-    self._parent     = parent
-    self._scan_timer = 0        -- fire first scan on next update
-    self._active     = {}       -- player_unit → marker_id
+    self._parent        = parent
+    self._scan_timer    = 0        -- fire first scan on next update
+    self._active        = {}       -- player_unit → marker_id
+    self._active_notes  = {}       -- player_unit → note text (for change detection)
 end
 
 HudElementPlayerNotes.update = function(self, dt, t)
@@ -104,13 +105,20 @@ HudElementPlayerNotes._scan_players = function(self)
 
             seen[unit] = true
 
-            if self._active[unit] then break end   -- marker already present
+            -- If marker exists but note text changed, remove it to re-add with updated text.
+            if self._active[unit] then
+                if self._active_notes[unit] == note then break end  -- unchanged, keep it
+                event_mgr:trigger("remove_world_marker", self._active[unit])
+                self._active[unit]       = nil
+                self._active_notes[unit] = nil
+            end
 
             local data = { puid = puid, note = note }
             local captured_unit = unit
             event_mgr:trigger("add_world_marker_unit", "pn_note", unit,
                 function(marker_id)
-                    self._active[captured_unit] = marker_id
+                    self._active[captured_unit]       = marker_id
+                    self._active_notes[captured_unit] = note
                 end,
                 data)
         until true
@@ -135,6 +143,7 @@ HudElementPlayerNotes._clear_all_markers = function(self)
         end
     end
     table.clear(self._active)
+    table.clear(self._active_notes)
 end
 
 return HudElementPlayerNotes
