@@ -60,7 +60,7 @@ HudElementPlayerNotes._scan_players = function(self)
 
     local my_player = self._parent:player()
     local players   = Managers.player:players()
-    local notes     = mod:get("player_notes") or {}
+    local notes     = mod._fn_get_notes and mod._fn_get_notes() or {}
     local event_mgr = Managers.event
     local alive     = ALIVE
     local seen      = {}   -- units that should have an active marker

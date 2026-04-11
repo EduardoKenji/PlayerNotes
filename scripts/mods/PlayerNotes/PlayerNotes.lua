@@ -88,39 +88,50 @@ end
 -- _puid_cache: player_info object reference → puid
 --   Avoids calling platform_user_id()/account_id() in the per-frame hover loop.
 --   Populated once in Hook 1 (roster blueprint calls, safe context).
+--   Weak keys: allows the GC to collect stale player_info refs without waiting
+--   for on_exit (handles abnormal view teardown).
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local _raw_names  = {}
-local _puid_cache = {}
+local _puid_cache = setmetatable({}, { __mode = "k" })
 -- Dedup guard: prevents calling mod:set for an already-persisted (char_name, puid) pair.
 -- Keyed by char_name.."\0"..puid. Cleared only by pn_notes_delete_all.
 local _known_chars = {}
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- PERSISTENCE CACHES
+-- DMF's mod:get() calls table.clone() on every invocation for table-typed
+-- settings — expensive in per-frame hooks. Load each table once at module init
+-- and keep a live reference. Mutate in-place; call mod:set() only when data
+-- actually changes so DMF snapshots the current state for disk persistence.
+-- mod:get() / mod:set() for booleans and strings are NOT cloned — fine as-is.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local _notes_cache          = mod:get("player_notes")   or {}
+local _names_cache          = mod:get("player_names")   or {}
+local _name_to_ids_cache    = mod:get("name_to_ids")    or {}
+local _char_to_player_cache = mod:get("char_to_player") or {}
+
+-- Exposed so hud_element_player_notes.lua can read notes without mod:get().
+mod._fn_get_notes = function() return _notes_cache end
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local function get_notes()
-    return mod:get("player_notes") or {}
-end
-
--- Name-to-IDs mapping: display_name → {id1, id2, ...}
--- This handles players with multiple IDs (e.g., online vs offline Xbox players)
-local function get_name_to_ids()
-    return mod:get("name_to_ids") or {}
-end
+local function get_notes()       return _notes_cache end
+local function get_name_to_ids() return _name_to_ids_cache end
 
 local function update_name_to_ids(display_name, puid)
     if not display_name or display_name == "" or not puid or puid == "" then return end
-    local name_to_ids = get_name_to_ids()
-    local id_list = name_to_ids[display_name] or {}
+    local id_list = _name_to_ids_cache[display_name] or {}
     -- Avoid duplicates
     for _, id in ipairs(id_list) do
         if id == puid then return end
     end
     table.insert(id_list, puid)
-    name_to_ids[display_name] = id_list
-    mod:set("name_to_ids", name_to_ids)
+    _name_to_ids_cache[display_name] = id_list
+    mod:set("name_to_ids", _name_to_ids_cache)
 end
 
 -- Look up note by display name, checking all associated IDs
@@ -142,16 +153,16 @@ local function save_note(puid, text, display_name)
         mod:echo("[PlayerNotes] ERROR: cannot save note — player key is nil/empty.")
         return
     end
-    local notes = get_notes()
 
     -- Sync to all known IDs for this name so online/offline IDs never diverge.
     -- (Xbox friends get a Fatshark UUID when offline and their Xbox XUID when online.)
+    -- Uses _name_to_ids_cache directly — no mod:get() clone needed.
     local function sync_all_ids(value)
-        notes[puid] = value
+        _notes_cache[puid] = value
         if display_name and display_name ~= "" then
-            local id_list = get_name_to_ids()[display_name] or {}
+            local id_list = _name_to_ids_cache[display_name] or {}
             for _, id in ipairs(id_list) do
-                notes[id] = value
+                _notes_cache[id] = value
             end
         end
     end
@@ -163,7 +174,7 @@ local function save_note(puid, text, display_name)
         sync_all_ids(nil)
     end
 
-    mod:set("player_notes", notes)
+    mod:set("player_notes", _notes_cache)
 end
 
 -- Try to get note by ID first, then fall back to name-based lookup
@@ -206,16 +217,15 @@ end
 
 local function save_player_name(key, name)
     if not key or key == "" or not name or name == "" then return end
-    local names = mod:get("player_names") or {}
-    if names[key] == name then return end
-    names[key] = name
-    mod:set("player_names", names)
+    if _names_cache[key] == name then return end
+    _names_cache[key] = name
+    mod:set("player_names", _names_cache)
     _raw_names[key] = name
 end
 
 local function get_cached_name(key)
     if not key or key == "" then return nil end
-    return _raw_names[key] or (mod:get("player_names") or {})[key]
+    return _raw_names[key] or _names_cache[key]
 end
 
 -- Get all IDs associated with a display name
@@ -236,9 +246,7 @@ end
 -- _known_chars guards against calling mod:set on every frame for the same pair.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local function get_char_to_player()
-    return mod:get("char_to_player") or {}
-end
+local function get_char_to_player() return _char_to_player_cache end
 
 local function update_char_to_player(char_name, puid, display_name, context)
     if not char_name or char_name == "" then return end
@@ -247,8 +255,7 @@ local function update_char_to_player(char_name, puid, display_name, context)
     local cache_key = char_name .. "\0" .. puid
     if _known_chars[cache_key] then return end  -- already persisted this pair this session
 
-    local map      = get_char_to_player()
-    local existing = map[char_name]
+    local existing = _char_to_player_cache[char_name]
 
     -- Mission beats hub: never let a hub observation overwrite a mission entry.
     if existing and existing.context == "mission" and context == "hub" then
@@ -256,13 +263,13 @@ local function update_char_to_player(char_name, puid, display_name, context)
         return
     end
 
-    map[char_name] = {
+    _char_to_player_cache[char_name] = {
         puid         = puid,
         display_name = display_name or "",
         last_seen    = os.time(),
         context      = context,
     }
-    mod:set("char_to_player", map)
+    mod:set("char_to_player", _char_to_player_cache)
     _known_chars[cache_key] = true
 end
 
@@ -1116,9 +1123,15 @@ mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the n
     mod:set("player_names", nil)
     mod:set("name_to_ids", nil)
     mod:set("char_to_player", nil)
-    -- Replace in-memory caches with fresh tables (safer than iterating + nil-ing)
+    -- Reset all in-memory persistence caches (closures over these upvalues
+    -- automatically see the new tables — mod._fn_get_notes() included).
+    _notes_cache          = {}
+    _names_cache          = {}
+    _name_to_ids_cache    = {}
+    _char_to_player_cache = {}
+    -- Reset session caches
     _raw_names   = {}
-    _puid_cache  = {}
+    _puid_cache  = setmetatable({}, { __mode = "k" })
     _known_chars = {}
     mod:echo("[PlayerNotes] All notes and name cache cleared.")
 end)
