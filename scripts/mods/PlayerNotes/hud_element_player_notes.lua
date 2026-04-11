@@ -26,9 +26,10 @@ local function _is_in_mission()
 end
 
 HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
-    self._parent     = parent
-    self._scan_timer = 0        -- fire first scan on next update
-    self._active     = {}       -- player_unit → marker_id
+    self._parent        = parent
+    self._scan_timer    = 0        -- fire first scan on next update
+    self._active        = {}       -- player_unit → marker_id
+    self._active_notes  = {}       -- player_unit → note text (for change detection)
 end
 
 HudElementPlayerNotes.update = function(self, dt, t)
@@ -53,6 +54,10 @@ HudElementPlayerNotes._scan_players = function(self)
     local social = Managers.data_service and Managers.data_service.social
     if not social then return end
 
+    -- ALIVE is a Stingray engine global. Guard against the brief window during
+    -- HUD init where it may not yet be populated.
+    if not ALIVE then return end
+
     local my_player = self._parent:player()
     local players   = Managers.player:players()
     local notes     = mod:get("player_notes") or {}
@@ -76,6 +81,18 @@ HudElementPlayerNotes._scan_players = function(self)
             local puid = player_info:platform_user_id()
             if not puid or puid == "" then break end
 
+            -- Track character name → player mapping with "mission" context.
+            -- Skip blocked players — character_name() returns a localized "Blocked Player"
+            -- string for them, which would pollute the char_to_player map.
+            -- use_stale=true, no_platform_icon=true matches the call form used everywhere else.
+            if not player_info:is_blocked() and mod._fn_update_char then
+                local char_name = player:name()
+                if char_name and char_name ~= "" then
+                    local display_name = player_info:user_display_name(true, true)
+                    mod._fn_update_char(char_name, puid, display_name, "mission")
+                end
+            end
+
             local note = notes[puid]
             if not note then
                 -- Player has no note: remove existing marker if any
@@ -88,13 +105,20 @@ HudElementPlayerNotes._scan_players = function(self)
 
             seen[unit] = true
 
-            if self._active[unit] then break end   -- marker already present
+            -- If marker exists but note text changed, remove it to re-add with updated text.
+            if self._active[unit] then
+                if self._active_notes[unit] == note then break end  -- unchanged, keep it
+                event_mgr:trigger("remove_world_marker", self._active[unit])
+                self._active[unit]       = nil
+                self._active_notes[unit] = nil
+            end
 
             local data = { puid = puid, note = note }
             local captured_unit = unit
             event_mgr:trigger("add_world_marker_unit", "pn_note", unit,
                 function(marker_id)
-                    self._active[captured_unit] = marker_id
+                    self._active[captured_unit]       = marker_id
+                    self._active_notes[captured_unit] = note
                 end,
                 data)
         until true
@@ -119,6 +143,7 @@ HudElementPlayerNotes._clear_all_markers = function(self)
         end
     end
     table.clear(self._active)
+    table.clear(self._active_notes)
 end
 
 return HudElementPlayerNotes

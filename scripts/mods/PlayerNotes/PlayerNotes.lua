@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.1.0
+    Version: 2.2.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -93,6 +93,9 @@ end
 
 local _raw_names  = {}
 local _puid_cache = {}
+-- Dedup guard: prevents calling mod:set for an already-persisted (char_name, puid) pair.
+-- Keyed by char_name.."\0"..puid. Cleared only by pn_notes_delete_all.
+local _known_chars = {}
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -220,6 +223,76 @@ end
 local function get_ids_for_name(display_name)
     if not display_name or display_name == "" then return nil end
     return get_name_to_ids()[display_name]
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- CHARACTER NAME → PLAYER MAPPING
+-- char_to_player[char_name] = { puid, display_name, last_seen, context }
+--
+-- context = "mission" | "hub"
+-- Priority rule: "mission" always beats "hub" — a mission entry is never
+-- overwritten by a hub observation. This prevents a hub-lobby player with the
+-- same character name as your recent mission teammate from hijacking the mapping.
+--
+-- _known_chars guards against calling mod:set on every frame for the same pair.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function get_char_to_player()
+    return mod:get("char_to_player") or {}
+end
+
+local function update_char_to_player(char_name, puid, display_name, context)
+    if not char_name or char_name == "" then return end
+    if not puid or puid == "" then return end
+
+    local cache_key = char_name .. "\0" .. puid
+    if _known_chars[cache_key] then return end  -- already persisted this pair this session
+
+    local map      = get_char_to_player()
+    local existing = map[char_name]
+
+    -- Mission beats hub: never let a hub observation overwrite a mission entry.
+    if existing and existing.context == "mission" and context == "hub" then
+        _known_chars[cache_key] = true  -- mark so we don't keep retrying
+        return
+    end
+
+    map[char_name] = {
+        puid         = puid,
+        display_name = display_name or "",
+        last_seen    = os.time(),
+        context      = context,
+    }
+    mod:set("char_to_player", map)
+    _known_chars[cache_key] = true
+end
+
+-- Expose so hud_element_player_notes.lua can record mission-context entries.
+mod._fn_update_char = update_char_to_player
+
+local function get_player_for_char(char_name)
+    if not char_name or char_name == "" then return nil end
+    return get_char_to_player()[char_name]
+end
+
+-- resolve_identifier: tries platform display name first, then character name.
+-- Returns (puid, display_name, match_type) where match_type is "tag" or "character".
+local function resolve_identifier(identifier)
+    if not identifier or identifier == "" then return nil, nil, nil end
+
+    -- 1. Platform display name (name_to_ids map — populated whenever a noted player is seen)
+    local ids = get_ids_for_name(identifier)
+    if ids and #ids > 0 then
+        return ids[1], identifier, "tag"
+    end
+
+    -- 2. Character name (char_to_player map — populated from social roster + mission scans)
+    local entry = get_player_for_char(identifier)
+    if entry then
+        return entry.puid, entry.display_name, "character"
+    end
+
+    return nil, nil, nil
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -474,6 +547,16 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
 
         if self:is_own_player() then return name, color_override end
 
+        -- Track character name → player mapping (hub context).
+        -- Skip blocked players — character_name() returns a localized string for them.
+        -- _known_chars ensures mod:set is only called once per unique (char, puid) pair.
+        if puid and not self:is_blocked() then
+            local char_name = self:character_name()
+            if char_name and char_name ~= "" then
+                update_char_to_player(char_name, puid, name, "hub")
+            end
+        end
+
         -- Try to get note using both puid and display name for ID mapping support
         local note = nil
         if puid then
@@ -506,6 +589,15 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
 
         if not player_info:is_own_player() and puid then
             mod._popup_puid = puid
+
+            -- Track character name → player mapping (hub context, exact same priority as roster).
+            -- Skip blocked players — character_name() returns a localized string for them.
+            if not player_info:is_blocked() then
+                local char_name = player_info:character_name()
+                if char_name and char_name ~= "" then
+                    update_char_to_player(char_name, puid, display_name, "hub")
+                end
+            end
 
             -- Get note using both ID and name for mapping support
             local note    = get_note(puid, display_name)
@@ -916,6 +1008,91 @@ mod:register_hud_element({
 -- ──────────────────────────────────────────────────────────────────────────────
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- COMMAND: /set_note <identifier> <text...>
+--
+-- Sets a note without needing to right-click first. The identifier can be:
+--   • A platform player tag  — e.g. Potty#1031  or  Ayas1260
+--   • A character name       — e.g. KimJongDois  or  OldWitch
+--
+-- Lookup order:
+--   1. name_to_ids map   (populated whenever a noted player is visible in Social)
+--   2. char_to_player map (populated from Social roster and mission scans)
+--
+-- If unrecognised, the player must first be seen in the Social panel or in a
+-- mission so the mod can build the mapping.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:command("set_note", "Set a note for a player by player tag or character name.", function(...)
+    local args = { ... }
+    if #args < 2 then
+        mod:echo("Usage: /set_note <player_tag_or_character_name> <note text>")
+        mod:echo("  e.g. /set_note Potty#1031 great psyker for havoc 40")
+        mod:echo("       /set_note KimJongDois great psyker for havoc 40")
+        return
+    end
+
+    local identifier             = args[1]
+    local text                   = table.concat(args, " ", 2)
+    local puid, display_name, match_type = resolve_identifier(identifier)
+
+    if not puid then
+        mod:echo(string.format("[PlayerNotes] Unknown: '%s'.", identifier))
+        mod:echo("Tip: right-click the player in Social panel first, or use their full tag (e.g. Potty#1031).")
+        return
+    end
+
+    save_note(puid, text, display_name)
+
+    if match_type == "character" then
+        mod:echo(string.format("Note saved for %s (character of %s).", identifier, display_name or "?"))
+    else
+        mod:echo(string.format("Note saved for %s.", display_name or identifier))
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- COMMAND: /set_note_clear <identifier>
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:command("set_note_clear", "Clear the note for a player by player tag or character name.", function(...)
+    local args = { ... }
+    if #args == 0 then
+        mod:echo("Usage: /set_note_clear <player_tag_or_character_name>")
+        return
+    end
+
+    local identifier             = args[1]
+    local puid, display_name, _ = resolve_identifier(identifier)
+
+    if not puid then
+        mod:echo(string.format("[PlayerNotes] Unknown: '%s'.", identifier))
+        return
+    end
+
+    save_note(puid, nil, display_name)
+    mod:echo(string.format("Note cleared for %s.", display_name or identifier))
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- COMMAND: /pn_chars — list the character-name → player-tag map
+-- ──────────────────────────────────────────────────────────────────────────────
+
+mod:command("pn_chars", "List known character-name to player-tag mappings.", function()
+    local map = get_char_to_player()
+    local count = 0
+    for char_name, entry in pairs(map) do
+        count = count + 1
+        mod:echo(string.format("[%d] %s → %s (%s)",
+            count, char_name,
+            entry.display_name or entry.puid or "?",
+            entry.context or "?"))
+    end
+    if count == 0 then
+        mod:echo("No character mappings recorded yet. Play a mission or open the Social panel.")
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- COMMAND: /pn_notes_delete_all — wipe all notes and the name cache
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -924,10 +1101,12 @@ mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the n
     -- table to the native SJSON serializer, which can cause a silent crash.
     mod:set("player_notes", nil)
     mod:set("player_names", nil)
-    mod:set("name_to_ids", nil)  -- Clear ID mapping data
+    mod:set("name_to_ids", nil)
+    mod:set("char_to_player", nil)
     -- Replace in-memory caches with fresh tables (safer than iterating + nil-ing)
-    _raw_names  = {}
-    _puid_cache = {}
+    _raw_names   = {}
+    _puid_cache  = {}
+    _known_chars = {}
     mod:echo("[PlayerNotes] All notes and name cache cleared.")
 end)
 
@@ -936,5 +1115,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.1.0 Loaded. /note /note_clear /pn_notes /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.2.1 Loaded. /note /note_clear /set_note /set_note_clear /pn_notes /pn_chars /pn_notes_delete_all")
 end
