@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.5.1
+    Version: 2.6.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -70,7 +70,8 @@ local TT_PAD   = 10
 local TT_Z     = 997
 
 -- Top-text bar dimensions (Alternative 2)
-local A2_W   = 600
+-- Width increased to 860 to fit "Name — Last seen in <mission> (<difficulty>) at <date>, <rel>" text.
+local A2_W   = 860
 local A2_H   = 34
 local A2_X   = 30
 local A2_Y   = 20
@@ -322,6 +323,91 @@ end
 -- Expose so hud_element_player_notes.lua can record mission-context entries.
 mod._fn_update_char = update_char_to_player
 
+-- ──────────────────────────────────────────────────────────────────────────────
+-- LAST-SEEN TRACKING
+--
+-- _last_seen_cache: puid → { ts = <unix timestamp>, loc = <location string> }
+--   Persisted across sessions via mod:set("player_last_seen").
+--   Location string examples: "Mourningstar", "Vigil Station Oblivium (Havoc 40)",
+--   "Smelter Complex (Auric)", "Archives (Auric Maelstrom)".
+--
+-- _session_seen: puid → true (in-memory only, not persisted)
+--   Guards against repeated mod:set() calls for the same player in the same session.
+--   Cleared on game-state exit so re-entering a map records a fresh timestamp.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local MONTHS = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"}
+
+local _last_seen_cache = mod:get("player_last_seen") or {}
+local _session_seen    = {}
+
+local function update_last_seen(puid, location)
+    if not puid or puid == "" then return end
+    if _session_seen[puid] then return end
+    _last_seen_cache[puid] = { ts = os.time(), loc = location }
+    mod:set("player_last_seen", _last_seen_cache)
+    _session_seen[puid] = true
+end
+
+-- Safe hub-context wrapper: only records when game_mode is hub/prologue_hub.
+-- Guards with pcall because Managers.state may be nil in menu/transition contexts.
+local function try_update_last_seen_hub(puid)
+    if not puid or puid == "" or _session_seen[puid] then return end
+    local ok, is_hub = pcall(function()
+        local gm = Managers.state and Managers.state.game_mode
+        return gm and (gm:game_mode_name() == "hub" or gm:game_mode_name() == "prologue_hub")
+    end)
+    if ok and is_hub then
+        update_last_seen(puid, "Mourningstar")
+    end
+end
+
+-- Format a last-seen entry as a human-readable string.
+-- Returns nil if no entry exists for puid.
+-- Example output: "Last seen in Vigil Station Oblivium (Havoc 40) at Mar 11th, 12:37pm, 2 days ago"
+local function format_last_seen_text(puid)
+    if not puid then return nil end
+    local entry = _last_seen_cache[puid]
+    if not entry or not entry.ts then return nil end
+
+    local ts    = entry.ts
+    local loc   = entry.loc or "Unknown"
+    local delta = os.time() - ts
+
+    if delta < 60 then
+        return "Last seen in " .. loc .. " just now"
+    end
+
+    local rel
+    if delta < 3600 then
+        local m = math.floor(delta / 60)
+        rel = m .. (m == 1 and " min ago" or " mins ago")
+    elseif delta < 86400 then
+        local h = math.floor(delta / 3600)
+        rel = h .. (h == 1 and " hr ago" or " hrs ago")
+    else
+        local d = math.floor(delta / 86400)
+        rel = d .. (d == 1 and " day ago" or " days ago")
+    end
+
+    local dt  = os.date("*t", ts)
+    local day = dt.day
+    local suf = "th"
+    if day % 10 == 1 and day ~= 11 then suf = "st"
+    elseif day % 10 == 2 and day ~= 12 then suf = "nd"
+    elseif day % 10 == 3 and day ~= 13 then suf = "rd" end
+    local hr = dt.hour
+    local ap = hr >= 12 and "pm" or "am"
+    hr = hr % 12; if hr == 0 then hr = 12 end
+    local date_str = string.format("%s %d%s, %d:%02d%s",
+        MONTHS[dt.month], day, suf, hr, dt.min, ap)
+
+    return string.format("Last seen in %s at %s, %s", loc, date_str, rel)
+end
+
+-- Expose so hud_element_player_notes.lua can record mission-context entries.
+mod._fn_update_last_seen = update_last_seen
+
 local function get_player_for_char(char_name)
     if not char_name or char_name == "" then return nil end
     return get_char_to_player()[char_name]
@@ -351,14 +437,15 @@ end
 -- HOVER STATE  (written by _draw_widgets hook, read by UIConstantElements hook)
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod._popup_puid           = nil
-mod._editing_puid         = nil
-mod._editing_name         = nil
-mod._hovered_note         = nil   -- full note text
-mod._hovered_raw_name     = nil   -- raw account name (no note appended)
-mod._hover_tx             = nil   -- tooltip x (UI base space)
-mod._hover_ty             = nil   -- tooltip y (UI base space)
-mod._hover_dyn_h          = nil   -- tooltip height for current note
+mod._popup_puid              = nil
+mod._editing_puid            = nil
+mod._editing_name            = nil
+mod._hovered_note            = nil   -- full note text (used by tooltip / fallback top bar)
+mod._hovered_raw_name        = nil   -- raw account name (no note appended)
+mod._hovered_last_seen_text  = nil   -- formatted "Last seen in X at Y, Z ago" for top bar
+mod._hover_tx                = nil   -- tooltip x (UI base space)
+mod._hover_ty                = nil   -- tooltip y (UI base space)
+mod._hover_dyn_h             = nil   -- tooltip height for current note
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- OVERLAY WIDGET DEFINITIONS
@@ -607,6 +694,7 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
             if char_name and char_name ~= "" then
                 update_char_to_player(char_name, puid, name, "hub")
             end
+            try_update_last_seen_hub(puid)
         end
 
         -- Try to get note using both puid and display name for ID mapping support
@@ -650,6 +738,7 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
                     update_char_to_player(char_name, puid, display_name, "hub")
                 end
             end
+            try_update_last_seen_hub(puid)
 
             -- Get note using both ID and name for mapping support
             local note    = get_note(puid, display_name)
@@ -696,14 +785,15 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
-    mod._popup_puid       = nil
-    mod._editing_puid     = nil
-    mod._editing_name     = nil
-    mod._hovered_note     = nil
-    mod._hovered_raw_name = nil
-    mod._hover_tx         = nil
-    mod._hover_ty         = nil
-    mod._hover_dyn_h      = nil
+    mod._popup_puid             = nil
+    mod._editing_puid           = nil
+    mod._editing_name           = nil
+    mod._hovered_note           = nil
+    mod._hovered_raw_name       = nil
+    mod._hovered_last_seen_text = nil
+    mod._hover_tx               = nil
+    mod._hover_ty               = nil
+    mod._hover_dyn_h            = nil
     _puid_cache = {}
 end)
 
@@ -725,11 +815,12 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
         func(self, dt, t, input_service, ui_renderer, render_settings)
 
         -- Reset hover state each frame
-        mod._hovered_note     = nil
-        mod._hovered_raw_name = nil
-        mod._hover_tx         = nil
-        mod._hover_ty         = nil
-        mod._hover_dyn_h      = nil
+        mod._hovered_note           = nil
+        mod._hovered_raw_name       = nil
+        mod._hovered_last_seen_text = nil
+        mod._hover_tx               = nil
+        mod._hover_ty               = nil
+        mod._hover_dyn_h            = nil
 
         if self._popup_menu then return end
 
@@ -787,11 +878,12 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                         local ty = math.max(wy, 10)
                         ty = math.min(ty, sh - dyn_h - 10)
 
-                        mod._hovered_note     = note
-                        mod._hovered_raw_name = raw_name
-                        mod._hover_tx         = tx
-                        mod._hover_ty         = ty
-                        mod._hover_dyn_h      = dyn_h
+                        mod._hovered_note           = note
+                        mod._hovered_raw_name       = raw_name
+                        mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
+                        mod._hover_tx               = tx
+                        mod._hover_ty               = ty
+                        mod._hover_dyn_h            = dyn_h
                     end
                     break
                 end
@@ -850,10 +942,14 @@ mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_ser
         pcall(UIWidget.draw, _pn_tooltip_widget, ui_renderer)
     end
 
-    -- ── Alternative 2: top-left name + note bar ───────────────────────────────
+    -- ── Alternative 2: top-left name + last-seen bar ────────────────────────────
+    -- Shows "Name — Last seen in <location> at <date>, <rel>" when last-seen data
+    -- is available; falls back to "Name — <note>" for players seen before this
+    -- feature was added.
     if show_top_bar then
-        local raw_name = mod._hovered_raw_name or "Player"
-        _pn_toptext_widget.content.label_text = raw_name .. "  —  " .. note
+        local raw_name  = mod._hovered_raw_name or "Player"
+        local bar_text  = mod._hovered_last_seen_text or note
+        _pn_toptext_widget.content.label_text = raw_name .. "  —  " .. bar_text
         _pn_toptext_widget.offset[1]          = A2_X
         _pn_toptext_widget.offset[2]          = A2_Y
         _pn_toptext_widget.offset[3]          = TT_Z
@@ -884,11 +980,12 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
         func(self, dt, t, input_service, ui_renderer, render_settings)
 
         -- Reset hover state each frame
-        mod._hovered_note     = nil
-        mod._hovered_raw_name = nil
-        mod._hover_tx         = nil
-        mod._hover_ty         = nil
-        mod._hover_dyn_h      = nil
+        mod._hovered_note           = nil
+        mod._hovered_raw_name       = nil
+        mod._hovered_last_seen_text = nil
+        mod._hover_tx               = nil
+        mod._hover_ty               = nil
+        mod._hover_dyn_h            = nil
 
         local grid = self._player_request_grid
         if not grid then return end
@@ -931,13 +1028,14 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
         local ty = math.max(my - dyn_h / 2, 10)
         ty = math.min(ty, sh - dyn_h - 10)
 
-        mod._hovered_note     = note
-        mod._hovered_raw_name = get_cached_name(puid)
-                             or player_info:user_display_name()
-                             or "Player"
-        mod._hover_tx         = tx
-        mod._hover_ty         = ty
-        mod._hover_dyn_h      = dyn_h
+        mod._hovered_note           = note
+        mod._hovered_raw_name       = get_cached_name(puid)
+                                   or player_info:user_display_name()
+                                   or "Player"
+        mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
+        mod._hover_tx               = tx
+        mod._hover_ty               = ty
+        mod._hover_dyn_h            = dyn_h
     end
 )
 
@@ -946,11 +1044,12 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
-    mod._hovered_note     = nil
-    mod._hovered_raw_name = nil
-    mod._hover_tx         = nil
-    mod._hover_ty         = nil
-    mod._hover_dyn_h      = nil
+    mod._hovered_note           = nil
+    mod._hovered_raw_name       = nil
+    mod._hovered_last_seen_text = nil
+    mod._hover_tx               = nil
+    mod._hover_ty               = nil
+    mod._hover_dyn_h            = nil
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -1169,16 +1268,19 @@ mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the n
     mod:set("player_names", nil)
     mod:set("name_to_ids", nil)
     mod:set("char_to_player", nil)
+    mod:set("player_last_seen", nil)
     -- Reset all in-memory persistence caches (closures over these upvalues
     -- automatically see the new tables — mod._fn_get_notes() included).
     _notes_cache          = {}
     _names_cache          = {}
     _name_to_ids_cache    = {}
     _char_to_player_cache = {}
+    _last_seen_cache      = {}
     -- Reset session caches
     _raw_names   = {}
     _puid_cache  = setmetatable({}, { __mode = "k" })
     _known_chars = {}
+    _session_seen = {}
     mod:echo("[PlayerNotes] All notes and name cache cleared.")
 end)
 
@@ -1186,6 +1288,14 @@ end)
 -- LIFECYCLE
 -- ──────────────────────────────────────────────────────────────────────────────
 
+-- Clear per-session last-seen guard when leaving a game state (mission or hub).
+-- This ensures re-entering a map records a fresh timestamp.
+mod.on_game_state_changed = function(status, state_name)
+    if status == "exit" then
+        _session_seen = {}
+    end
+end
+
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.5.1 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.6.1 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end

@@ -25,6 +25,73 @@ local function _is_in_mission()
     return name ~= "hub" and name ~= "prologue_hub"
 end
 
+-- Builds the location string for the current mission.
+-- Called once per scan (not per player). Returns nil if state isn't ready.
+-- Examples:
+--   "Vigil Station Oblivium (Havoc 40)"
+--   "Smelter Complex (Auric Maelstrom)"
+--   "Archives (Auric)"
+--   "Hab Dreyko"
+local function _get_current_location()
+    local ok, result = pcall(function()
+        local mission_key = Managers.state.mission and Managers.state.mission:mission_name()
+        if not mission_key then return nil end
+
+        -- Resolve human-readable mission name via the mission template.
+        -- Template's mission_name field is a localization key (e.g. "loc_mission_name_cm_archives").
+        local ok_tmpl, MissionTemplates = pcall(require, "scripts/settings/mission/mission_templates")
+        local template    = ok_tmpl and MissionTemplates and MissionTemplates[mission_key]
+        local loc_key     = template and template.mission_name
+        local display_name
+        if loc_key then
+            local ok_loc, localized = pcall(Localize, loc_key)
+            display_name = (ok_loc and localized and localized ~= loc_key) and localized or mission_key
+        else
+            display_name = mission_key
+        end
+
+        -- Difficulty suffix.
+        local suffix = ""
+        local diff_mgr = Managers.state.difficulty
+        if diff_mgr then
+            -- Havoc: has its own rank number, takes priority.
+            local ok_hav, havoc_data = pcall(function() return diff_mgr:get_parsed_havoc_data() end)
+            if ok_hav and havoc_data and havoc_data.havoc_rank then
+                suffix = " (Havoc " .. tostring(havoc_data.havoc_rank) .. ")"
+            else
+                -- Auric Maelstrom: flash_mission circumstance at Auric tier.
+                local circ_mgr     = Managers.state.circumstance
+                local circ_name    = circ_mgr and circ_mgr:circumstance_name()
+                local is_maelstrom = circ_name and circ_name:find("^flash_mission") ~= nil
+
+                -- Auric: use Danger.danger_by_difficulty(challenge, resistance) — authoritative
+                -- for ALL mission types including expeditions.
+                -- pacing:is_auric() only works for standard missions (expedition pacing
+                -- template never sets the is_auric flag). Danger utility is what the mission
+                -- board and expedition view both use.
+                -- Auric = challenge 5 + resistance 5; Damnation = challenge 5 + resistance 4.
+                local is_auric = false
+                local ok_d, Danger = pcall(require, "scripts/utilities/danger")
+                if ok_d and Danger then
+                    local ch = diff_mgr:get_challenge()
+                    local rs = diff_mgr:get_resistance()
+                    local ok_tier, tier = pcall(function() return Danger.danger_by_difficulty(ch, rs) end)
+                    is_auric = ok_tier and tier and tier.is_auric or false
+                end
+
+                if is_maelstrom then
+                    suffix = " (Auric Maelstrom)"
+                elseif is_auric then
+                    suffix = " (Auric)"
+                end
+            end
+        end
+
+        return display_name .. suffix
+    end)
+    return (ok and result) or nil
+end
+
 HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._parent        = parent
     self._scan_timer    = 0        -- fire first scan on next update
@@ -53,6 +120,10 @@ HudElementPlayerNotes._scan_players = function(self)
 
     local social = Managers.data_service and Managers.data_service.social
     if not social then return end
+
+    -- Capture current location once per scan for last-seen tracking.
+    -- Only meaningful in missions; nil in hub (hub tracking handled by Social panel hooks).
+    local current_location = _is_in_mission() and _get_current_location() or nil
 
     -- ALIVE is a Stingray engine global. Guard against the brief window during
     -- HUD init where it may not yet be populated.
@@ -91,6 +162,11 @@ HudElementPlayerNotes._scan_players = function(self)
                     local display_name = player_info:user_display_name(true, true)
                     mod._fn_update_char(char_name, puid, display_name, "mission")
                 end
+            end
+
+            -- Record last-seen location for this player (once per session via _session_seen guard).
+            if current_location and mod._fn_update_last_seen then
+                mod._fn_update_last_seen(puid, current_location)
             end
 
             local note = notes[puid]
