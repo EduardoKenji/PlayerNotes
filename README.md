@@ -1,4 +1,4 @@
-# PlayerNotes
+# PlayerNotes v2.4.0
 
 **Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel, Party Finder, and in-world above player nameplates.
 
@@ -56,13 +56,25 @@
 
 The note is now saved and will appear according to your display settings (inline, tooltip, top-bar, world notes).
 
-### Clearing a note
+### Setting a note by player tag or character name
+
+You can also set a note directly without going through the Social panel:
 
 ```
-/note_clear
+/set_note <player_tag_or_character_name> <note text>
+/set_note Potty#1031 great psyker for havoc 40
+/set_note KimJongDois great psyker for havoc 40
 ```
 
-Click **Add Note** on the friend first to select them, then run `/note_clear`.
+The identifier can be a platform player tag (e.g. `Potty#1031`) or a character name seen in a mission or the Social panel. Character names are tracked automatically.
+
+### Deleting a note
+
+```
+/delete_note <player_tag_or_character_name>
+/delete_note Potty#1031
+/delete_note KimJongDois
+```
 
 ### Listing all notes
 
@@ -71,6 +83,14 @@ Click **Add Note** on the friend first to select them, then run `/note_clear`.
 ```
 
 Shows all saved notes with player names (if cached) or their platform IDs.
+
+### Listing character-name mappings
+
+```
+/pn_chars
+```
+
+Shows all known character name → player tag mappings. These are recorded automatically when you see a player in a mission or the Social panel.
 
 ### Deleting all notes
 
@@ -87,7 +107,11 @@ Navigate to **PlayerNotes** in the mod options menu to toggle:
 - **Show inline notes** — append note preview to friend names (disabled by default)
 - **Show top bar** — name + note bar at top-left when hovering (enabled by default)
 - **Show tooltip** — floating tooltip box near hovered player (enabled by default)
-- **Show world notes** — notes above player nameplates in-game (enabled by default)
+- **Show world notes** — notes above player nameplates in hub/lobby (enabled by default)
+
+**Experimental options:**
+
+- **Show world notes in missions** — also show notes above nameplates during missions (disabled by default)
 
 ---
 
@@ -95,9 +119,11 @@ Navigate to **PlayerNotes** in the mod options menu to toggle:
 
 | Command | Description |
 |---|---|
-| `/note <text>` | Save a note for the last selected player |
-| `/note_clear` | Delete the note for the last selected player |
+| `/note <text>` | Save a note for the last selected player (via Social panel) |
+| `/set_note <tag_or_char> <text>` | Save a note by player tag or character name |
+| `/delete_note <tag_or_char>` | Delete a note by player tag or character name |
 | `/pn_notes` | List all saved notes with player names/IDs |
+| `/pn_chars` | List known character name → player tag mappings |
 | `/pn_notes_delete_all` | Wipe ALL notes and name cache (use with caution) |
 
 ---
