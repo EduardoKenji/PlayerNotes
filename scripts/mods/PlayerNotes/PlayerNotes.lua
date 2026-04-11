@@ -49,7 +49,7 @@ local _PN_HUD_ELEMENT_PATH  = "PlayerNotes/scripts/mods/PlayerNotes/hud_element_
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local STR_BTN_ADD    = "Add Note"
-local STR_SELECTED   = "Selected %s — type /note [text] to save, /note_clear to remove."
+local STR_SELECTED   = "Selected %s — type /note [text] to save."
 local STR_SAVED      = "Note saved for %s."
 local STR_NONE_SEL   = "Click 'Add Note' on a player first."
 local STR_USAGE_NOTE = "Usage: /note [your note text]"
