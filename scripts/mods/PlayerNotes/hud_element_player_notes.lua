@@ -15,6 +15,16 @@ local HudElementPlayerNotes = class("HudElementPlayerNotes")
 
 local SCAN_INTERVAL = 2.0   -- seconds between full player scans
 
+-- Returns true when the player is in a mission (not in the Morningstar/prologue hub).
+-- Mirrors the hub detection used in hud_visibility_groups.lua and
+-- constant_element_onboarding_handler.lua: both "hub" and "prologue_hub" are hub modes.
+local function _is_in_mission()
+    local gm = Managers.state and Managers.state.game_mode
+    if not gm then return false end
+    local name = gm:game_mode_name()
+    return name ~= "hub" and name ~= "prologue_hub"
+end
+
 HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._parent     = parent
     self._scan_timer = 0        -- fire first scan on next update
@@ -31,6 +41,11 @@ end
 
 HudElementPlayerNotes._scan_players = function(self)
     if not mod:get("show_world_notes") then
+        self:_clear_all_markers()
+        return
+    end
+
+    if _is_in_mission() and not mod:get("show_world_notes_in_missions") then
         self:_clear_all_markers()
         return
     end

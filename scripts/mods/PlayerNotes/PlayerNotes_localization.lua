@@ -68,6 +68,20 @@ return {
         en = "Show note above player head",
     },
     opt_show_world_notes_title_description = {
-        en = "Shows the player's note to the right of their nameplate in the game world (hub and missions).",
+        en = "Shows the player's note to the right of their nameplate in the game world. Always active in the Morningstar hub. Use the option below to also enable it in missions.",
+    },
+
+    opt_experimental_group_title = {
+        en = "Experimental",
+    },
+    experimental_group_description = {
+        en = "Features that may affect performance or visibility. Disabled by default.",
+    },
+
+    opt_show_world_notes_in_missions_title = {
+        en = "Show world notes in missions",
+    },
+    opt_show_world_notes_in_missions_title_description = {
+        en = "Also shows notes above player heads during missions. Disabled by default to avoid cluttering the screen during combat. Requires 'Show note above player head' to be enabled.",
     },
 }
