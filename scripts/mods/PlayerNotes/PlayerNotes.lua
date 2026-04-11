@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.2.1
+    Version: 2.3.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -51,7 +51,6 @@ local _PN_HUD_ELEMENT_PATH  = "PlayerNotes/scripts/mods/PlayerNotes/hud_element_
 local STR_BTN_ADD    = "Add Note"
 local STR_SELECTED   = "Selected %s — type /note [text] to save, /note_clear to remove."
 local STR_SAVED      = "Note saved for %s."
-local STR_CLEARED    = "Note cleared for %s."
 local STR_NONE_SEL   = "Click 'Add Note' on a player first."
 local STR_USAGE_NOTE = "Usage: /note [your note text]"
 
@@ -905,7 +904,7 @@ end)
 -- COMMAND: /note <text>
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:command("note", "Save a note for the last selected player.", function(...)
+mod:command("note", "Save a note for the last selected player through the 'Social' window.", function(...)
     local args = { ... }
     if #args == 0 then mod:echo(STR_USAGE_NOTE); return end
     if not mod._editing_puid then mod:echo(STR_NONE_SEL); return end
@@ -913,19 +912,6 @@ mod:command("note", "Save a note for the last selected player.", function(...)
     -- Pass display_name to save_note for ID mapping support
     save_note(mod._editing_puid, text, mod._editing_name)
     mod:echo(string.format(STR_SAVED, mod._editing_name or "player"))
-    mod._editing_puid = nil
-    mod._editing_name = nil
-end)
-
--- ──────────────────────────────────────────────────────────────────────────────
--- COMMAND: /note_clear
--- ──────────────────────────────────────────────────────────────────────────────
-
-mod:command("note_clear", "Clear the note for the last selected player.", function()
-    if not mod._editing_puid then mod:echo(STR_NONE_SEL); return end
-    -- Pass display_name to save_note for ID mapping support
-    save_note(mod._editing_puid, nil, mod._editing_name)
-    mod:echo(string.format(STR_CLEARED, mod._editing_name or "player"))
     mod._editing_puid = nil
     mod._editing_name = nil
 end)
@@ -1022,7 +1008,7 @@ mod:register_hud_element({
 -- mission so the mod can build the mapping.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:command("set_note", "Set a note for a player by player tag or character name.", function(...)
+mod:command("set_note", "<player_tag_or_character_name> <note> | Set a note for a player by their player tag or character name.", function(...)
     local args = { ... }
     if #args < 2 then
         mod:echo("Usage: /set_note <player_tag_or_character_name> <note text>")
@@ -1051,26 +1037,53 @@ mod:command("set_note", "Set a note for a player by player tag or character name
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
--- COMMAND: /set_note_clear <identifier>
+-- COMMAND: /delete_note <identifier>
+--
+-- Removes the note for a player. The identifier can be:
+--   • A platform player tag  — e.g. Potty#1031  or  Ayas1260
+--   • A character name       — e.g. KimJongDois  or  OldWitch
+--
+-- Lookup order:
+--   1. name_to_ids map   (player tag exact match)
+--   2. char_to_player map (character name), where mission context beats hub
+--      and more recently seen characters beat older ones within the same context.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:command("set_note_clear", "Clear the note for a player by player tag or character name.", function(...)
+mod:command("delete_note", "<player_tag_or_character_name> | Delete the note for a player by their player tag or character name.", function(...)
     local args = { ... }
     if #args == 0 then
-        mod:echo("Usage: /set_note_clear <player_tag_or_character_name>")
+        mod:echo("Usage: /delete_note <player_tag_or_character_name>")
+        mod:echo("  e.g. /delete_note Potty#1031")
+        mod:echo("       /delete_note KimJongDois")
         return
     end
 
-    local identifier             = args[1]
-    local puid, display_name, _ = resolve_identifier(identifier)
+    local identifier                    = args[1]
+    local puid, display_name, match_type = resolve_identifier(identifier)
 
     if not puid then
         mod:echo(string.format("[PlayerNotes] Unknown: '%s'.", identifier))
+        mod:echo("Tip: right-click the player in Social panel first, or use their full tag (e.g. Potty#1031).")
+        return
+    end
+
+    local existing_note = get_note(puid, display_name)
+    if not existing_note or existing_note == "" then
+        if match_type == "character" then
+            mod:echo(string.format("[PlayerNotes] No note found for %s (character of %s).", identifier, display_name or "?"))
+        else
+            mod:echo(string.format("[PlayerNotes] No note found for %s.", display_name or identifier))
+        end
         return
     end
 
     save_note(puid, nil, display_name)
-    mod:echo(string.format("Note cleared for %s.", display_name or identifier))
+
+    if match_type == "character" then
+        mod:echo(string.format("Note deleted for %s (character of %s).", identifier, display_name or "?"))
+    else
+        mod:echo(string.format("Note deleted for %s.", display_name or identifier))
+    end
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -1115,5 +1128,5 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.2.1 Loaded. /note /note_clear /set_note /set_note_clear /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.3.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
