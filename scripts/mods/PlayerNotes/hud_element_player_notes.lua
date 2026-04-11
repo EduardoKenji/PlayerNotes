@@ -76,6 +76,15 @@ HudElementPlayerNotes._scan_players = function(self)
             local puid = player_info:platform_user_id()
             if not puid or puid == "" then break end
 
+            -- Track character name → player mapping with "mission" context.
+            -- Mission context has the highest priority (see update_char_to_player in PlayerNotes.lua).
+            -- mod._fn_update_char is set at PlayerNotes.lua load time.
+            local char_name = player:name()
+            if char_name and char_name ~= "" and mod._fn_update_char then
+                local display_name = player_info:user_display_name()
+                mod._fn_update_char(char_name, puid, display_name, "mission")
+            end
+
             local note = notes[puid]
             if not note then
                 -- Player has no note: remove existing marker if any
