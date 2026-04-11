@@ -548,8 +548,9 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
         if self:is_own_player() then return name, color_override end
 
         -- Track character name → player mapping (hub context).
+        -- Skip blocked players — character_name() returns a localized string for them.
         -- _known_chars ensures mod:set is only called once per unique (char, puid) pair.
-        if puid then
+        if puid and not self:is_blocked() then
             local char_name = self:character_name()
             if char_name and char_name ~= "" then
                 update_char_to_player(char_name, puid, name, "hub")
@@ -589,10 +590,13 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
         if not player_info:is_own_player() and puid then
             mod._popup_puid = puid
 
-            -- Track character name → player mapping (hub context, exact same priority as roster)
-            local char_name = player_info:character_name()
-            if char_name and char_name ~= "" then
-                update_char_to_player(char_name, puid, display_name, "hub")
+            -- Track character name → player mapping (hub context, exact same priority as roster).
+            -- Skip blocked players — character_name() returns a localized string for them.
+            if not player_info:is_blocked() then
+                local char_name = player_info:character_name()
+                if char_name and char_name ~= "" then
+                    update_char_to_player(char_name, puid, display_name, "hub")
+                end
             end
 
             -- Get note using both ID and name for mapping support

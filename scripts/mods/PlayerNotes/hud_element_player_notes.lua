@@ -53,6 +53,10 @@ HudElementPlayerNotes._scan_players = function(self)
     local social = Managers.data_service and Managers.data_service.social
     if not social then return end
 
+    -- ALIVE is a Stingray engine global. Guard against the brief window during
+    -- HUD init where it may not yet be populated.
+    if not ALIVE then return end
+
     local my_player = self._parent:player()
     local players   = Managers.player:players()
     local notes     = mod:get("player_notes") or {}
@@ -77,12 +81,15 @@ HudElementPlayerNotes._scan_players = function(self)
             if not puid or puid == "" then break end
 
             -- Track character name → player mapping with "mission" context.
-            -- Mission context has the highest priority (see update_char_to_player in PlayerNotes.lua).
-            -- mod._fn_update_char is set at PlayerNotes.lua load time.
-            local char_name = player:name()
-            if char_name and char_name ~= "" and mod._fn_update_char then
-                local display_name = player_info:user_display_name()
-                mod._fn_update_char(char_name, puid, display_name, "mission")
+            -- Skip blocked players — character_name() returns a localized "Blocked Player"
+            -- string for them, which would pollute the char_to_player map.
+            -- use_stale=true, no_platform_icon=true matches the call form used everywhere else.
+            if not player_info:is_blocked() and mod._fn_update_char then
+                local char_name = player:name()
+                if char_name and char_name ~= "" then
+                    local display_name = player_info:user_display_name(true, true)
+                    mod._fn_update_char(char_name, puid, display_name, "mission")
+                end
             end
 
             local note = notes[puid]
