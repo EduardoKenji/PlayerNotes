@@ -904,7 +904,7 @@ end)
 -- COMMAND: /note <text>
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:command("note", "Save a note for the last selected player.", function(...)
+mod:command("note", "Save a note for the last selected player through the 'Social' window.", function(...)
     local args = { ... }
     if #args == 0 then mod:echo(STR_USAGE_NOTE); return end
     if not mod._editing_puid then mod:echo(STR_NONE_SEL); return end
