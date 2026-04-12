@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.6.3
+    Version: 2.6.4
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -345,10 +345,16 @@ local _session_seen    = {}
 
 local function update_last_seen(puid, location)
     if not puid or puid == "" then return end
-    if _session_seen[puid] then return end
-    _last_seen_cache[puid] = { ts = os.time(), loc = location }
+    
+    local now = os.time()
+    local last_update = _session_seen[puid] or 0
+    
+    -- Update only if never seen this session, OR if last update was > 300 seconds (5 mins) ago
+    if (now - last_update) < 300 then return end 
+    
+    _last_seen_cache[puid] = { ts = now, loc = location }
     mod:set("player_last_seen", _last_seen_cache)
-    _session_seen[puid] = true
+    _session_seen[puid] = now -- Store the timestamp instead of 'true'
 end
 
 -- Format a last-seen entry as a human-readable string.
@@ -1290,5 +1296,5 @@ mod.on_game_state_changed = function(status, state_name)
 end
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.6.3 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.6.4 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
