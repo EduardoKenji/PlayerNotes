@@ -123,7 +123,7 @@ HudElementPlayerNotes._scan_players = function(self)
 
     -- Capture current location once per scan for last-seen tracking.
     -- Only meaningful in missions; nil in hub (hub tracking handled by Social panel hooks).
-    local current_location = _is_in_mission() and _get_current_location() or nil
+    local current_location = _is_in_mission() and _get_current_location() or "Mourningstar"
 
     -- ALIVE is a Stingray engine global. Guard against the brief window during
     -- HUD init where it may not yet be populated.

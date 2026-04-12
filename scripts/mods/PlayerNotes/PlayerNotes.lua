@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.6.1
+    Version: 2.6.2
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -349,19 +349,6 @@ local function update_last_seen(puid, location)
     _session_seen[puid] = true
 end
 
--- Safe hub-context wrapper: only records when game_mode is hub/prologue_hub.
--- Guards with pcall because Managers.state may be nil in menu/transition contexts.
-local function try_update_last_seen_hub(puid)
-    if not puid or puid == "" or _session_seen[puid] then return end
-    local ok, is_hub = pcall(function()
-        local gm = Managers.state and Managers.state.game_mode
-        return gm and (gm:game_mode_name() == "hub" or gm:game_mode_name() == "prologue_hub")
-    end)
-    if ok and is_hub then
-        update_last_seen(puid, "Mourningstar")
-    end
-end
-
 -- Format a last-seen entry as a human-readable string.
 -- Returns nil if no entry exists for puid.
 -- Example output: "Last seen in Vigil Station Oblivium (Havoc 40) at Mar 11th, 12:37pm, 2 days ago"
@@ -694,7 +681,6 @@ mod:hook(CLASS.PlayerInfo, "user_display_name",
             if char_name and char_name ~= "" then
                 update_char_to_player(char_name, puid, name, "hub")
             end
-            try_update_last_seen_hub(puid)
         end
 
         -- Try to get note using both puid and display name for ID mapping support
@@ -738,7 +724,6 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
                     update_char_to_player(char_name, puid, display_name, "hub")
                 end
             end
-            try_update_last_seen_hub(puid)
 
             -- Get note using both ID and name for mapping support
             local note    = get_note(puid, display_name)
