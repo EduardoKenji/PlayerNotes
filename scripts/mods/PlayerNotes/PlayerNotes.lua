@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.7.1
+    Version: 2.7.2
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -899,13 +899,8 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
     function(func, self, dt, t, input_service, ui_renderer, render_settings)
         func(self, dt, t, input_service, ui_renderer, render_settings)
 
-        -- Reset hover state each frame
-        mod._hovered_note           = nil
-        mod._hovered_raw_name       = nil
-        mod._hovered_last_seen_text = nil
-        mod._hover_tx               = nil
-        mod._hover_ty               = nil
-        mod._hover_dyn_h            = nil
+        -- REMOVED: The "Reset hover state each frame" block from here.
+        -- We only reset when the mouse is not hovering anyone (see bottom of function).
 
         if self._popup_menu then return end
 
@@ -941,8 +936,7 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                     local pi   = w.content and w.content.player_info
                     local puid = pi and not w.content.is_own_player and _puid_cache[pi]
                     
-                    -- OPTIMIZATION: Only recalculate strings/notes if the hovered player has actually changed.
-                    -- This prevents thousands of string concatenations per minute.
+                    -- OPTIMIZATION: Only recalculate expensive strings/notes if the hovered player has changed.
                     if puid ~= mod._last_hovered_puid then
                         mod._last_hovered_puid = puid
                         
@@ -961,16 +955,20 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                             local bar_text = puid and format_last_seen_text(puid) or note
                             mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
                             
-                            -- Cache these for the per-frame positioning logic below
+                            -- Store visual state
                             mod._hovered_note           = note
                             mod._hovered_raw_name       = raw_name
                             mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
                             mod._hover_dyn_h            = compute_tooltip_height(note)
+                        else
+                            -- If they have no note, clear the visuals immediately
+                            mod._hovered_note = nil
+                            mod._hovered_raw_name = nil
+                            mod._hovered_last_seen_text = nil
                         end
                     end
 
-                    -- Position logic must still run per-frame because the mouse is moving,
-                    -- but it now uses the cached values from above.
+                    -- Position logic MUST run every frame because the cursor is moving.
                     local note = mod._hovered_note
                     if note then
                         local dyn_h = mod._hover_dyn_h
@@ -987,9 +985,15 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
             end
         end
 
-        -- If the mouse is no longer over any player, reset the tracking ID
+        -- If the mouse is no longer over any player, reset ALL state.
         if not found_hover then
-            mod._last_hovered_puid = nil
+            mod._last_hovered_puid      = nil
+            mod._hovered_note           = nil
+            mod._hovered_raw_name       = nil
+            mod._hovered_last_seen_text = nil
+            mod._hover_tx               = nil
+            mod._hover_ty               = nil
+            mod._hover_dyn_h            = nil
         end
     end
 )
@@ -1408,5 +1412,5 @@ mod.on_game_state_changed = function(status, state_name)
 end
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.7.1 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.7.2 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
