@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.7.0
+    Version: 2.7.1
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -128,6 +128,8 @@ mod._fn_get_notes = function() return _notes_cache end
 mod._cached_top_bar_text = ""
 
 mod._notification_done_for_session = false
+
+mod._last_hovered_puid = nil
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -876,6 +878,7 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
     mod._hover_tx               = nil
     mod._hover_ty               = nil
     mod._hover_dyn_h            = nil
+    mod._last_hovered_puid      = nil
     _puid_cache = {}
 end)
 
@@ -921,58 +924,72 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
         local gx  = grid_node.world_position[1]
         local gy  = grid_node.world_position[2]
 
+        local found_hover = false
+
         for i = 1, #roster_widgets do
             local w   = roster_widgets[i]
             local off = w.offset
             if off then
                 local wx = gx + off[1]
                 local wy = gy + off[2]
-                -- w.content.size is authoritative; w.size is always nil (UIWidget.init)
                 local cs = w.content and w.content.size
                 local ww = (cs and cs[1]) or 480
                 local wh = (cs and cs[2]) or 80
 
                 if mx >= wx and mx <= wx + ww and my >= wy and my <= wy + wh then
-                    -- Use _puid_cache to avoid any native method calls on player_info
-                    -- during the render loop. is_own_player is a plain bool in content.
+                    found_hover = true
                     local pi   = w.content and w.content.player_info
                     local puid = pi and not w.content.is_own_player and _puid_cache[pi]
                     
-                    -- Get raw name from cache or widget content
-                    local raw_name = get_cached_name(puid)
-                        or (w.content and w.content.account_name)
-                        or "Player"
-                    
-                    -- Try to get note using both puid and display name for ID mapping support
-                    local note = nil
-                    if puid then
-                        note = get_note(puid, raw_name)
-                    else
-                        note = get_note_by_name(raw_name)
+                    -- OPTIMIZATION: Only recalculate strings/notes if the hovered player has actually changed.
+                    -- This prevents thousands of string concatenations per minute.
+                    if puid ~= mod._last_hovered_puid then
+                        mod._last_hovered_puid = puid
+                        
+                        local raw_name = get_cached_name(puid)
+                            or (w.content and w.content.account_name)
+                            or "Player"
+                        
+                        local note = nil
+                        if puid then
+                            note = get_note(puid, raw_name)
+                        else
+                            note = get_note_by_name(raw_name)
+                        end
+                        
+                        if note then
+                            local bar_text = puid and format_last_seen_text(puid) or note
+                            mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
+                            
+                            -- Cache these for the per-frame positioning logic below
+                            mod._hovered_note           = note
+                            mod._hovered_raw_name       = raw_name
+                            mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
+                            mod._hover_dyn_h            = compute_tooltip_height(note)
+                        end
                     end
-                    
-                    if note then
-                        local dyn_h = compute_tooltip_height(note)
 
-                        -- Position tooltip to the right; flip left if off-screen
+                    -- Position logic must still run per-frame because the mouse is moving,
+                    -- but it now uses the cached values from above.
+                    local note = mod._hovered_note
+                    if note then
+                        local dyn_h = mod._hover_dyn_h
                         local tx = wx + ww + 15
                         if tx + TT_W > sw then tx = wx - TT_W - 15 end
                         local ty = math.max(wy, 10)
                         ty = math.min(ty, sh - dyn_h - 10)
 
-                        local bar_text = puid and format_last_seen_text(puid) or note
-                        mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
-
-                        mod._hovered_note           = note
-                        mod._hovered_raw_name       = raw_name
-                        mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
-                        mod._hover_tx               = tx
-                        mod._hover_ty               = ty
-                        mod._hover_dyn_h            = dyn_h
+                        mod._hover_tx = tx
+                        mod._hover_ty = ty
                     end
                     break
                 end
             end
+        end
+
+        -- If the mouse is no longer over any player, reset the tracking ID
+        if not found_hover then
+            mod._last_hovered_puid = nil
         end
     end
 )
@@ -1138,6 +1155,7 @@ mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
     mod._hover_tx               = nil
     mod._hover_ty               = nil
     mod._hover_dyn_h            = nil
+    mod._last_hovered_puid      = nil
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -1390,5 +1408,5 @@ mod.on_game_state_changed = function(status, state_name)
 end
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.7.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.7.1 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
