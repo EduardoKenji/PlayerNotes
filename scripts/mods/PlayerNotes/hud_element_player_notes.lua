@@ -97,6 +97,7 @@ HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._scan_timer    = 0        -- fire first scan on next update
     self._active        = {}       -- player_unit → marker_id
     self._active_notes  = {}       -- player_unit → note text (for change detection)
+    self._seen_buffer   = {}       -- Persistent buffer to avoid RAM churn
 end
 
 HudElementPlayerNotes.update = function(self, dt, t)
@@ -134,7 +135,8 @@ HudElementPlayerNotes._scan_players = function(self)
     local notes     = mod._fn_get_notes and mod._fn_get_notes() or {}
     local event_mgr = Managers.event
     local alive     = ALIVE
-    local seen      = {}   -- units that should have an active marker
+    local seen      = self._seen_buffer
+    for k in pairs(seen) do seen[k] = nil end -- Clear the buffer for the new scan
 
     for _, player in pairs(players) do
         repeat

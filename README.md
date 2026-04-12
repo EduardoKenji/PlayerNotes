@@ -1,4 +1,4 @@
-# PlayerNotes v2.6.2
+# PlayerNotes v2.6.3
 
 **Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel, Party Finder, and in-world above player nameplates.
 

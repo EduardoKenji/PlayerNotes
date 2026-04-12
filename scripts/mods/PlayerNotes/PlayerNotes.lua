@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.6.2
+    Version: 2.6.3
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -123,6 +123,8 @@ local _char_to_player_cache = mod:get("char_to_player") or {}
 
 -- Exposed so hud_element_player_notes.lua can read notes without mod:get().
 mod._fn_get_notes = function() return _notes_cache end
+
+mod._cached_top_bar_text = "" 
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -863,6 +865,9 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
                         local ty = math.max(wy, 10)
                         ty = math.min(ty, sh - dyn_h - 10)
 
+                        local bar_text = puid and format_last_seen_text(puid) or note
+                        mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
+
                         mod._hovered_note           = note
                         mod._hovered_raw_name       = raw_name
                         mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
@@ -934,7 +939,7 @@ mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_ser
     if show_top_bar then
         local raw_name  = mod._hovered_raw_name or "Player"
         local bar_text  = mod._hovered_last_seen_text or note
-        _pn_toptext_widget.content.label_text = raw_name .. "  —  " .. bar_text
+        _pn_toptext_widget.content.label_text = mod._cached_top_bar_text
         _pn_toptext_widget.offset[1]          = A2_X
         _pn_toptext_widget.offset[2]          = A2_Y
         _pn_toptext_widget.offset[3]          = TT_Z
@@ -1012,6 +1017,9 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
         if tx < 10 then tx = mx + 20 end
         local ty = math.max(my - dyn_h / 2, 10)
         ty = math.min(ty, sh - dyn_h - 10)
+
+        local bar_text = puid and format_last_seen_text(puid) or note
+        mod._cached_top_bar_text = mod._hovered_raw_name .. "  —  " .. bar_text
 
         mod._hovered_note           = note
         mod._hovered_raw_name       = get_cached_name(puid)
@@ -1282,5 +1290,5 @@ mod.on_game_state_changed = function(status, state_name)
 end
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.6.1 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.6.3 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end
