@@ -98,9 +98,28 @@ HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._active        = {}       -- player_unit → marker_id
     self._active_notes  = {}       -- player_unit → note text (for change detection)
     self._seen_buffer   = {}       -- Persistent buffer to avoid RAM churn
+    self._marker_data_buffer = {}  -- Reusable market data table
+    
+    -- Start the notification timer whenever the HUD is created.
+    -- This covers initial login, loading into missions, AND changing operatives.
+    mod._notification_timer = 3.0
 end
 
+
 HudElementPlayerNotes.update = function(self, dt, t)
+    -- 1. Handle the notification timer first
+    if mod._notification_timer and mod._notification_timer > 0 then
+        mod._notification_timer = mod._notification_timer - dt
+        if mod._notification_timer <= 0 then
+            -- Call the notification function (defined in PlayerNotes.lua)
+            if mod._fn_notify_players then
+                mod._fn_notify_players()
+            end
+            mod._notification_timer = 0 
+        end
+    end
+
+    -- 2. Existing scan timer logic...
     self._scan_timer = self._scan_timer - dt
     if self._scan_timer > 0 then return end
     self._scan_timer = SCAN_INTERVAL
@@ -122,9 +141,15 @@ HudElementPlayerNotes._scan_players = function(self)
     local social = Managers.data_service and Managers.data_service.social
     if not social then return end
 
-    -- Capture current location once per scan for last-seen tracking.
-    -- Only meaningful in missions; nil in hub (hub tracking handled by Social panel hooks).
-    local current_location = _is_in_mission() and _get_current_location() or "Mourningstar"
+    -- BUG 2 FIX: Only determine location if we are actually in a state to do so.
+    -- If we are in a mission but the resolver returns nil, current_location remains nil.
+    -- This prevents "Mourningstar" from being accidentally sent during mission load screens.
+    local current_location = nil
+    if _is_in_mission() then
+        current_location = _get_current_location()
+    else
+        current_location = "Mourningstar"
+    end
 
     -- ALIVE is a Stingray engine global. Guard against the brief window during
     -- HUD init where it may not yet be populated.
@@ -155,9 +180,6 @@ HudElementPlayerNotes._scan_players = function(self)
             if not puid or puid == "" then break end
 
             -- Track character name → player mapping with "mission" context.
-            -- Skip blocked players — character_name() returns a localized "Blocked Player"
-            -- string for them, which would pollute the char_to_player map.
-            -- use_stale=true, no_platform_icon=true matches the call form used everywhere else.
             if not player_info:is_blocked() and mod._fn_update_char then
                 local char_name = player:name()
                 if char_name and char_name ~= "" then
@@ -166,7 +188,7 @@ HudElementPlayerNotes._scan_players = function(self)
                 end
             end
 
-            -- Record last-seen location for this player (once per session via _session_seen guard).
+            -- Record last-seen location for this player (Smart-Throttle is handled inside the function).
             if current_location and mod._fn_update_last_seen then
                 mod._fn_update_last_seen(puid, current_location)
             end
@@ -191,14 +213,17 @@ HudElementPlayerNotes._scan_players = function(self)
                 self._active_notes[unit] = nil
             end
 
-            local data = { puid = puid, note = note }
+            -- MEMORY OPTIMIZATION: Reuse the buffer table instead of creating a new one per player per scan.
+            self._marker_data_buffer.puid = puid
+            self._marker_data_buffer.note = note
+            
             local captured_unit = unit
             event_mgr:trigger("add_world_marker_unit", "pn_note", unit,
                 function(marker_id)
                     self._active[captured_unit]       = marker_id
                     self._active_notes[captured_unit] = note
                 end,
-                data)
+                self._marker_data_buffer)
         until true
     end
 

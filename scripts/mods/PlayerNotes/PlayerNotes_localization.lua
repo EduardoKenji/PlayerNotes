@@ -79,9 +79,15 @@ return {
     },
 
     opt_show_world_notes_in_missions_title = {
-        en = "Show world notes in missions",
+        en = "Show 2D world notes in missions",
     },
     opt_show_world_notes_in_missions_title_description = {
         en = "Also shows notes above player heads during missions. Disabled by default to avoid cluttering the screen during combat. Requires 'Show note above player head' to be enabled.",
+    },
+    opt_show_session_notifications_title = {
+        en = "Show same session noted players notifications",
+    },
+    opt_show_session_notifications_title_description = {
+        en = "Displays a notification in the top-right when entering a map if noted players are present.",
     },
 }

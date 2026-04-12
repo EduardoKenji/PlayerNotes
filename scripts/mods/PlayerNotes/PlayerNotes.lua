@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.6.4
+    Version: 2.7.2
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -120,11 +120,16 @@ local _notes_cache          = mod:get("player_notes")   or {}
 local _names_cache          = mod:get("player_names")   or {}
 local _name_to_ids_cache    = mod:get("name_to_ids")    or {}
 local _char_to_player_cache = mod:get("char_to_player") or {}
+local _notification_timer = 0
 
 -- Exposed so hud_element_player_notes.lua can read notes without mod:get().
 mod._fn_get_notes = function() return _notes_cache end
 
-mod._cached_top_bar_text = "" 
+mod._cached_top_bar_text = ""
+
+mod._notification_done_for_session = false
+
+mod._last_hovered_puid = nil
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -187,6 +192,84 @@ local function save_note(puid, text, display_name)
 
     mod:set("player_notes", _notes_cache)
 end
+
+local function notify_noted_players_in_session()
+    if mod._notification_done_for_session then return end
+
+    if not mod:get("show_session_notifications") then return end
+
+    local players = Managers.player:players()
+    local notes = mod._fn_get_notes and mod._fn_get_notes() or {}
+    
+    local noted_list = {}
+
+    for _, player in pairs(players) do
+        -- SKIP the local player
+        if player ~= Managers.player:local_player() then
+            local account_id = player.account_id and player:account_id()
+            
+            -- Only proceed if we have an account ID
+            if account_id then
+                local player_info = Managers.data_service.social:get_player_info_by_account_id(account_id)
+                
+                -- Only proceed if the social service has the player's info
+                if player_info then
+                    local puid = player_info:platform_user_id()
+                    
+                    -- If they are in our notes cache, add them to the list
+                    if puid and notes[puid] then
+                        local char_name = player:name() or "Unknown"
+                        local tag = player_info:user_display_name(true, true) or "Unknown"
+                        table.insert(noted_list, string.format("%s(%s)", char_name, tag))
+                    end
+                end
+            end
+        end
+    end
+
+    local count = #noted_list
+    if count == 0 then return end -- Don't show if no one is noted
+
+    -- Formatting the lines
+    local line_1 = string.format("[PlayerNotes] Noted players here (%d):", count)
+    local line_2 = ""
+    local line_3 = ""
+
+    if count == 1 then
+        line_2 = noted_list[1]
+    elseif count == 2 then
+        line_2 = noted_list[1]
+        line_3 = noted_list[2]
+    else
+        -- Split the list: half on line 2, half on line 3
+        local mid = math.ceil(count / 2)
+        local l2_players = {}
+        local l3_players = {}
+        for i = 1, count do
+            if i <= mid then 
+                table.insert(l2_players, noted_list[i]) 
+            else 
+                table.insert(l3_players, noted_list[i]) 
+            end
+        end
+        line_2 = table.concat(l2_players, ", ")
+        line_3 = table.concat(l3_players, ", ")
+    end
+
+    -- Trigger the native Game Notification
+    Managers.event:trigger("event_add_notification_message", "custom", {
+        line_1 = line_1,
+        line_1_color = { 255, 255, 255, 255 },
+        line_2 = line_2,
+        line_2_color = { 200, 200, 200, 255 },
+        line_3 = line_3,
+        line_3_color = { 200, 200, 200, 255 },
+    })
+
+    mod._notification_done_for_session = true 
+end
+
+mod._fn_notify_players = notify_noted_players_in_session
 
 -- Try to get note by ID first, then fall back to name-based lookup
 local function get_note(puid, display_name)
@@ -348,13 +431,21 @@ local function update_last_seen(puid, location)
     
     local now = os.time()
     local last_update = _session_seen[puid] or 0
+    local last_entry = _last_seen_cache[puid]
     
-    -- Update only if never seen this session, OR if last update was > 300 seconds (5 mins) ago
-    if (now - last_update) < 300 then return end 
+    -- SMART THROTTLE LOGIC:
+    -- 1. If the location has changed (e.g., Hub -> Mission), update IMMEDIATELY.
+    -- 2. If the location is the same, only update if 300 seconds have passed.
+    local location_changed = not last_entry or last_entry.loc ~= location
+    local timer_expired = (now - last_update) >= 300
+
+    if not location_changed and not timer_expired then 
+        return 
+    end
     
     _last_seen_cache[puid] = { ts = now, loc = location }
     mod:set("player_last_seen", _last_seen_cache)
-    _session_seen[puid] = now -- Store the timestamp instead of 'true'
+    _session_seen[puid] = now 
 end
 
 -- Format a last-seen entry as a human-readable string.
@@ -787,6 +878,7 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
     mod._hover_tx               = nil
     mod._hover_ty               = nil
     mod._hover_dyn_h            = nil
+    mod._last_hovered_puid      = nil
     _puid_cache = {}
 end)
 
@@ -807,13 +899,8 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
     function(func, self, dt, t, input_service, ui_renderer, render_settings)
         func(self, dt, t, input_service, ui_renderer, render_settings)
 
-        -- Reset hover state each frame
-        mod._hovered_note           = nil
-        mod._hovered_raw_name       = nil
-        mod._hovered_last_seen_text = nil
-        mod._hover_tx               = nil
-        mod._hover_ty               = nil
-        mod._hover_dyn_h            = nil
+        -- REMOVED: The "Reset hover state each frame" block from here.
+        -- We only reset when the mouse is not hovering anyone (see bottom of function).
 
         if self._popup_menu then return end
 
@@ -832,58 +919,81 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
         local gx  = grid_node.world_position[1]
         local gy  = grid_node.world_position[2]
 
+        local found_hover = false
+
         for i = 1, #roster_widgets do
             local w   = roster_widgets[i]
             local off = w.offset
             if off then
                 local wx = gx + off[1]
                 local wy = gy + off[2]
-                -- w.content.size is authoritative; w.size is always nil (UIWidget.init)
                 local cs = w.content and w.content.size
                 local ww = (cs and cs[1]) or 480
                 local wh = (cs and cs[2]) or 80
 
                 if mx >= wx and mx <= wx + ww and my >= wy and my <= wy + wh then
-                    -- Use _puid_cache to avoid any native method calls on player_info
-                    -- during the render loop. is_own_player is a plain bool in content.
+                    found_hover = true
                     local pi   = w.content and w.content.player_info
                     local puid = pi and not w.content.is_own_player and _puid_cache[pi]
                     
-                    -- Get raw name from cache or widget content
-                    local raw_name = get_cached_name(puid)
-                        or (w.content and w.content.account_name)
-                        or "Player"
-                    
-                    -- Try to get note using both puid and display name for ID mapping support
-                    local note = nil
-                    if puid then
-                        note = get_note(puid, raw_name)
-                    else
-                        note = get_note_by_name(raw_name)
+                    -- OPTIMIZATION: Only recalculate expensive strings/notes if the hovered player has changed.
+                    if puid ~= mod._last_hovered_puid then
+                        mod._last_hovered_puid = puid
+                        
+                        local raw_name = get_cached_name(puid)
+                            or (w.content and w.content.account_name)
+                            or "Player"
+                        
+                        local note = nil
+                        if puid then
+                            note = get_note(puid, raw_name)
+                        else
+                            note = get_note_by_name(raw_name)
+                        end
+                        
+                        if note then
+                            local bar_text = puid and format_last_seen_text(puid) or note
+                            mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
+                            
+                            -- Store visual state
+                            mod._hovered_note           = note
+                            mod._hovered_raw_name       = raw_name
+                            mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
+                            mod._hover_dyn_h            = compute_tooltip_height(note)
+                        else
+                            -- If they have no note, clear the visuals immediately
+                            mod._hovered_note = nil
+                            mod._hovered_raw_name = nil
+                            mod._hovered_last_seen_text = nil
+                        end
                     end
-                    
-                    if note then
-                        local dyn_h = compute_tooltip_height(note)
 
-                        -- Position tooltip to the right; flip left if off-screen
+                    -- Position logic MUST run every frame because the cursor is moving.
+                    local note = mod._hovered_note
+                    if note then
+                        local dyn_h = mod._hover_dyn_h
                         local tx = wx + ww + 15
                         if tx + TT_W > sw then tx = wx - TT_W - 15 end
                         local ty = math.max(wy, 10)
                         ty = math.min(ty, sh - dyn_h - 10)
 
-                        local bar_text = puid and format_last_seen_text(puid) or note
-                        mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
-
-                        mod._hovered_note           = note
-                        mod._hovered_raw_name       = raw_name
-                        mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
-                        mod._hover_tx               = tx
-                        mod._hover_ty               = ty
-                        mod._hover_dyn_h            = dyn_h
+                        mod._hover_tx = tx
+                        mod._hover_ty = ty
                     end
                     break
                 end
             end
+        end
+
+        -- If the mouse is no longer over any player, reset ALL state.
+        if not found_hover then
+            mod._last_hovered_puid      = nil
+            mod._hovered_note           = nil
+            mod._hovered_raw_name       = nil
+            mod._hovered_last_seen_text = nil
+            mod._hover_tx               = nil
+            mod._hover_ty               = nil
+            mod._hover_dyn_h            = nil
         end
     end
 )
@@ -1049,6 +1159,7 @@ mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
     mod._hover_tx               = nil
     mod._hover_ty               = nil
     mod._hover_dyn_h            = nil
+    mod._last_hovered_puid      = nil
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -1292,9 +1403,14 @@ end)
 mod.on_game_state_changed = function(status, state_name)
     if status == "exit" then
         _session_seen = {}
+        -- Reset the flag when leaving the map
+        mod._notification_done_for_session = false
+    elseif status == "enter" then
+        -- We use mod._notification_timer so the HUD file can see it
+        mod._notification_timer = 3.0
     end
 end
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.6.4 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.7.2 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end

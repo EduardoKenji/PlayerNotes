@@ -1,4 +1,4 @@
-# PlayerNotes v2.6.4
+# PlayerNotes v2.7.2
 
 **Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel, Party Finder, and in-world above player nameplates.
 
@@ -111,7 +111,7 @@ Navigate to **PlayerNotes** in the mod options menu to toggle:
 
 **Experimental options:**
 
-- **Show world notes in missions** — also show notes above nameplates during missions (disabled by default)
+- **Show 2D world notes in missions** — also show notes above nameplates during missions (disabled by default)
 
 ---
 
