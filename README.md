@@ -6,19 +6,18 @@
 
 ## Features
 
-- **Right-click to annotate** — right-click any friend → **Add Note** / **Edit Note**
+- **Right-click to annotate** — right-click any friend → **Add Note** / **Edit Note**.
 - **Three display modes** (all independently togglable via F4 Mod Options):
-  - **Inline notes** — append note preview directly to friend name (e.g. `Arthuralo64 · good psyker for havoc 40`)
-  - **Top-bar** — shows "Name — note" in a small bar at top-left when hovering
-  - **Tooltip** — floating box near the hovered player row, dynamically sized to fit the text
-- **World notes** — notes appear above player nameplates in-game (within ~15m range)
-- **Party Finder support** — hover tooltips work for join requesters in Group Finder
-- **Persistent** — notes survive game restarts (saved via DMF `mod:get/set`)
-- **Platform-stable keys** — keyed by `platform_user_id` (Steam/Xbox/PSN ID) with fallback to `account_id` for cross-platform offline friends
-- **Offline-friend support** — notes work even when the friend is offline
-- **Name cache** — player names persisted so `/pn_notes` shows readable names after restarts
-- **ID mapping** — automatically handles players with multiple IDs (e.g., Xbox players with different online/offline IDs)
-- **Chat commands** — `/note <text>` to save, `/note_clear` to delete, `/pn_notes` to list all
+  - **Inline notes** — append note preview directly to friend name (e.g. `Arthuralo64 · good psyker for havoc 40`).
+  - **Top-bar** — shows "Name — note" in a small bar at top-left when hovering. **Now includes "Last Seen" data (Location, Difficulty, and Timestamp).**
+  - **Tooltip** — floating box near the hovered player row, dynamically sized to fit the text.
+- **Last-Seen Tracking** — Automatically records where and when you last encountered a player, including mission name and difficulty (e.g., *Havoc 40, Auric, or Auric Maelstrom*).
+- **Session Notifications** — Get a native game notification upon entering a map if players with saved notes are present in your current session.
+- **World notes** — Stylized note boxes appear above player nameplates in-game (within ~15m range).
+- **Party Finder support** — Hover tooltips work for join requesters in Group Finder.
+- **Persistent** — Notes and location history survive game restarts.
+- **Platform-stable keys** — Keyed by `platform_user_id` (Steam/Xbox/PSN ID) with fallback to `account_id` for cross-platform offline friends.
+- **Performance Optimized** — Implements LRU (Least Recently Used) caching for character mappings and table reuse to minimize RAM churn and Garbage Collection (GC) spikes.
 
 ---
 
@@ -54,8 +53,6 @@
 /note good psyker for havoc 40 runs
 ```
 
-The note is now saved and will appear according to your display settings (inline, tooltip, top-bar, world notes).
-
 ### Setting a note by player tag or character name
 
 You can also set a note directly without going through the Social panel:
@@ -66,7 +63,7 @@ You can also set a note directly without going through the Social panel:
 /set_note KimJongDois great psyker for havoc 40
 ```
 
-The identifier can be a platform player tag (e.g. `Potty#1031`) or a character name seen in a mission or the Social panel. Character names are tracked automatically.
+The identifier can be a platform player tag (e.g. `Potty#1031`) or a character name seen in a mission or the Social panel.
 
 ### Deleting a note
 
@@ -104,14 +101,15 @@ Wipes ALL saved notes and the name cache. Use with caution!
 
 Navigate to **PlayerNotes** in the mod options menu to toggle:
 
-- **Show inline notes** — append note preview to friend names (disabled by default)
-- **Show top bar** — name + note bar at top-left when hovering (enabled by default)
-- **Show tooltip** — floating tooltip box near hovered player (enabled by default)
-- **Show world notes** — notes above player nameplates in hub/lobby (enabled by default)
+- **Show inline notes** — append note preview to friend names.
+- **Show top bar** — shows "Name — Last seen in [Location] at [Date], [Time ago]" when hovering.
+- **Show tooltip** — floating tooltip box near hovered player.
+- **Show world notes** — notes above player nameplates in hub/lobby.
 
 **Experimental options:**
 
-- **Show 2D world notes in missions** — also show notes above nameplates during missions (disabled by default)
+- **Show 2D world notes in missions** — also show notes above nameplates during missions (disabled by default to reduce clutter).
+- **Show session notifications** — display a notification in the top-right when entering a map if noted players are present.
 
 ---
 
@@ -139,8 +137,6 @@ Tested on the current live version of Darktide. Should be compatible with most m
 - `GroupFinderView._draw_widgets` — for Party Finder hover tooltips
 - `UIConstantElements.draw` — for overlay rendering (tooltip + top-bar)
 - `HudElementWorldMarkers.init` — for world note template injection
-
-May conflict with mods that hook the same methods or modify social/player name rendering.
 
 ---
 
