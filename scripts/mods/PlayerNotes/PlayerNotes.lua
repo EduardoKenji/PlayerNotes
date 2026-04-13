@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.7.2
+    Version: 2.8.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -130,6 +130,11 @@ mod._cached_top_bar_text = ""
 mod._notification_done_for_session = false
 
 mod._last_hovered_puid = nil
+
+mod._session_known_players = {} -- PUID -> true
+mod._summary_fired = false      -- Track if initial session summary has fired
+mod._pending_join_checks = {}   -- account_id -> timestamp
+mod._join_timer = 0             -- Internal timer for the monitor
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -287,6 +292,20 @@ local function get_note(puid, display_name)
     end
     
     return nil
+end
+
+local function notify_player_joined(display_name, char_name)
+    local line_1 = "[PlayerNotes] Player Joined:"
+    local line_2 = string.format("%s (%s)", char_name or "Unknown", display_name or "Unknown")
+    
+    Managers.event:trigger("event_add_notification_message", "custom", {
+        line_1 = line_1,
+        line_1_color = { 255, 255, 255, 255 },
+        line_2 = line_2,
+        line_2_color = { 200, 200, 200, 255 },
+        line_3 = "", 
+        line_3_color = { 200, 200, 200, 255 },
+    })
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -746,6 +765,23 @@ local function _ensure_overlay_ready()
     return true
 end
 
+-- Inside the mod:hook(CLASS.PlayerManager, "add_human_player", ...)
+mod:hook(CLASS.PlayerManager, "add_human_player", function(func, self, ...)
+    local args = {...}
+    local player = args[1] -- The player object is usually the first arg in this hook
+    local account_id = args[7] 
+
+    if account_id and account_id ~= "no_account_id" then
+        -- STORE the player object here so we don't have to search for it later
+        mod._pending_join_checks[account_id] = {
+            player = player,
+            timestamp = os.time()
+        }
+    end
+    
+    return func(self, ...)
+end)
+
 -- ──────────────────────────────────────────────────────────────────────────────
 -- HOOK 1: Inline note in account_name row
 -- Guarded by "show_inline" mod option.
@@ -1133,14 +1169,15 @@ mod:hook(CLASS.GroupFinderView, "_draw_widgets",
         if tx < 10 then tx = mx + 20 end
         local ty = math.max(my - dyn_h / 2, 10)
         ty = math.min(ty, sh - dyn_h - 10)
+        
+        mod._hovered_note           = note
+        mod._hovered_raw_name       = get_cached_name(puid) 
+                                or player_info:user_display_name() 
+                                or "Player"
 
         local bar_text = puid and format_last_seen_text(puid) or note
         mod._cached_top_bar_text = mod._hovered_raw_name .. "  —  " .. bar_text
 
-        mod._hovered_note           = note
-        mod._hovered_raw_name       = get_cached_name(puid)
-                                   or player_info:user_display_name()
-                                   or "Player"
         mod._hovered_last_seen_text = puid and format_last_seen_text(puid) or nil
         mod._hover_tx               = tx
         mod._hover_ty               = ty
@@ -1398,6 +1435,52 @@ end)
 -- LIFECYCLE
 -- ──────────────────────────────────────────────────────────────────────────────
 
+mod.on_update = function(self, dt)
+    -- 1. CPU GUARD: If no one is pending, don't even run the timer logic
+    if not next(mod._pending_join_checks) then return end
+
+    -- 2. Monitor pending joins (Keep at 1.0s for responsiveness)
+    mod._join_timer = (mod._join_timer or 0) + dt
+    if mod._join_timer < 1.0 then return end
+    mod._join_timer = 0
+
+    if not mod._summary_fired then return end 
+    if not mod:get("show_join_notifications") then return end
+
+    local social = Managers.data_service and Managers.data_service.social
+    if not social then return end
+
+    for account_id, data in pairs(mod._pending_join_checks) do
+        local player_info = social:get_player_info_by_account_id(account_id)
+        
+        if player_info then
+            local puid = player_info:platform_user_id()
+            if puid and puid ~= "" then
+                local notes = mod._fn_get_notes()
+                if notes[puid] then
+                    if not mod._session_known_players[puid] then
+                        local display_name = player_info:user_display_name(true, true)
+                        
+                        local char_name = "Unknown"
+                        -- Use pcall (protected call) so if data.player isn't actually a player object, 
+                        -- the mod just says "Unknown" instead of crashing the whole game.
+                        if data.player then
+                            local ok, name = pcall(function() return data.player:name() end)
+                            if ok and name then
+                                char_name = name
+                            end
+                        end
+                        
+                        notify_player_joined(display_name, char_name)
+                        mod._session_known_players[puid] = true
+                    end
+                end
+                mod._pending_join_checks[account_id] = nil
+            end
+        end
+    end
+end
+
 -- Clear per-session last-seen guard when leaving a game state (mission or hub).
 -- This ensures re-entering a map records a fresh timestamp.
 mod.on_game_state_changed = function(status, state_name)
@@ -1405,6 +1488,10 @@ mod.on_game_state_changed = function(status, state_name)
         _session_seen = {}
         -- Reset the flag when leaving the map
         mod._notification_done_for_session = false
+        -- Reset flags that handle noted players joining notifications
+        mod._summary_fired = false           
+        mod._session_known_players = {}     
+        mod._pending_join_checks = {}       
     elseif status == "enter" then
         -- We use mod._notification_timer so the HUD file can see it
         mod._notification_timer = 3.0
@@ -1412,5 +1499,5 @@ mod.on_game_state_changed = function(status, state_name)
 end
 
 mod.on_all_mods_loaded = function()
-    mod:echo("[PlayerNotes] v2.7.2 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+    mod:echo("[PlayerNotes] v2.8.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
 end

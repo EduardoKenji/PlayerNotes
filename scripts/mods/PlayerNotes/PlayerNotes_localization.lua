@@ -90,4 +90,10 @@ return {
     opt_show_session_notifications_title_description = {
         en = "Displays a notification in the top-right when entering a map if noted players are present.",
     },
+    opt_show_join_notifications_title = {
+        en = "Notify when noted players join",
+    },
+    opt_show_join_notifications_title_description = {
+        en = "Displays a notification when a player with a saved note joins your current instance (Hub or Mission).",
+    },
 }

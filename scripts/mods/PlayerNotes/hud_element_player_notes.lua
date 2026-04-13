@@ -116,6 +116,7 @@ HudElementPlayerNotes.update = function(self, dt, t)
                 mod._fn_notify_players()
             end
             mod._notification_timer = 0 
+            mod._summary_fired = true -- Mark summary as done
         end
     end
 
