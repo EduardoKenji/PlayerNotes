@@ -1,7 +1,7 @@
 return {
     name         = "PlayerNotes",
     description  = "Add persistent notes to any player in the Social panel or Party Finder. Hover a player to see their note.",
-    version      = "2.7.2",
+    version      = "2.7.3",
     is_togglable = true,
     options = {
         widgets = {
@@ -45,6 +45,12 @@ return {
                         type          = "checkbox",
                         default_value = true,
                         title         = "opt_show_session_notifications_title",
+                    },
+                    {
+                        setting_id    = "enable_debug_echo",
+                        type          = "checkbox",
+                        default_value = false,
+                        title         = "opt_debug_echo_title",
                     },
                 },
             },

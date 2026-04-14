@@ -90,4 +90,16 @@ return {
     opt_show_session_notifications_title_description = {
         en = "Displays a notification in the top-right when entering a map if noted players are present.",
     },
+    opt_debug_echo_title = {
+        en = "Enable debug mod:echo",
+    },
+    opt_debug_echo_title_description = {
+        en = "Displays the mod loading message and debug information in the chat console.",
+    },
+        opt_enable_splash_notification_title = {
+        en = "Enable splash screen notification",
+    },
+    opt_enable_splash_notification_title_description = {
+        en = "If enabled, shows a notification when the game first reaches the splash screen/hub. This is separate from mission session notifications.",
+    },
 }
