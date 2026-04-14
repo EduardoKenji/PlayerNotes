@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.7.3
+    Version: 2.7.4
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -130,6 +130,8 @@ mod._cached_top_bar_text = ""
 mod._notification_done_for_session = false
 
 mod._last_hovered_puid = nil
+
+mod._last_hover_time = 0
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- PERSISTENCE
@@ -933,6 +935,10 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
 
                 if mx >= wx and mx <= wx + ww and my >= wy and my <= wy + wh then
                     found_hover = true
+
+                    -- HEARTBEAT: Tell the renderer we are still actively hovering
+                    mod._last_hover_time = t 
+
                     local pi   = w.content and w.content.player_info
                     local puid = pi and not w.content.is_own_player and _puid_cache[pi]
                     
@@ -1009,6 +1015,19 @@ mod:hook(CLASS.SocialMenuRosterView, "_draw_widgets",
 
 mod:hook(CLASS.UIConstantElements, "draw", function(func, self, dt, t, input_service)
     func(self, dt, t, input_service)
+
+    -- THE WATCHDOG: If the heartbeat hasn't been updated in 0.1 seconds,
+    -- it means the hover logic is gone or the mouse left. Clear everything.
+    if t - mod._last_hover_time > 0.1 then
+        mod._hovered_note           = nil
+        mod._hovered_raw_name       = nil
+        mod._hovered_last_seen_text = nil
+        mod._hover_tx               = nil
+        mod._hover_ty               = nil
+        mod._hover_dyn_h            = nil
+        mod._last_hovered_puid      = nil
+        mod._cached_top_bar_text    = ""
+    end
 
     local note = mod._hovered_note
     if not note then return end
@@ -1413,6 +1432,6 @@ end
 
 mod.on_all_mods_loaded = function()
     if mod:get("enable_debug_echo") then
-        mod:echo("[PlayerNotes] v2.7.3 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+        mod:echo("[PlayerNotes] v2.7.4 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
     end
 end
