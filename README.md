@@ -1,167 +1,172 @@
-# PlayerNotes v2.9.0
+# PlayerNotes v2.10.0
 
-**Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel, Party Finder, and in-world above player nameplates.
+PlayerNotes adds private, persistent notes to players you encounter in Warhammer 40,000: Darktide. Notes can be created from the Social panel or Party Finder and shown in the roster, on hover, or above nearby players.
 
----
+Version 2.10.0 is a reliability and cohesion release built on LucLeto's CPU-usage improvements and the reviewed optimizations recovered from the local 2.8.1 build.
 
 ## Features
 
-- **Right-click to annotate** — right-click any friend → **Add Note** / **Edit Note**.
-- **Three display modes** (all independently togglable via F4 Mod Options):
-  - **Inline notes** — append note preview directly to friend name (e.g. `Arthuralo64 · good psyker for havoc 40`).
-  - **Top-bar** — shows "Name — note" in a small bar at top-left when hovering. **Now includes "Last Seen" data (Location, Difficulty, and Timestamp).**
-  - **Tooltip** — floating box near the hovered player row, dynamically sized to fit the text.
-- **Last-Seen Tracking** — Automatically records where and when you last encountered a player, including mission name and difficulty (e.g., *Havoc 40, Auric, or Auric Maelstrom*).
-- **Session Notifications** — Get a native game notification upon entering a map if players with saved notes are present in your current session.
-- **World notes** — Stylized note boxes appear above player nameplates in-game (within ~15m range).
-- **Party Finder support** — add/edit notes for join requesters from their request card and hover them to see saved notes.
-- **Persistent** — Notes and location history survive game restarts.
-- **Platform-stable keys** — Keyed by `platform_user_id` (Steam/Xbox/PSN ID) with fallback to `account_id` for cross-platform offline friends.
-- **Performance Optimized** — Implements LRU (Least Recently Used) caching for character mappings and table reuse to minimize RAM churn and Garbage Collection (GC) spikes.
+- Add or edit a note from a player's Social-panel menu.
+- Select a Party Finder applicant from the note button on their request card.
+- Show a short note preview beside a Social-roster name. When inline text is disabled, a compact note icon is shown instead.
+- Show the full note in a floating hover tooltip.
+- Show a top-left hover bar. It displays last-seen information when available and otherwise displays a bounded note preview.
+- Show note boxes above nearby players in the Mourningstar, with optional mission support.
+- Notify once after entering a map when a player with a saved note is present.
+- Record where and when a noted player was last encountered.
+- Resolve `/set_note` and `/delete_note` by a uniquely mapped player tag or a recently observed character name.
 
----
-
-## Performance
-
-The 2.9.0 codebase combines LucLeto's CPU-usage work with reviewed optimizations from the local 2.8.1 build:
-
-- Social roster names are decorated inside the roster blueprint instead of globally hooking `PlayerInfo.user_display_name`.
-- UI draw integrations use post-only safe hooks, keeping the base game's draw work out of PlayerNotes callbacks.
-- Player identity lookups, including misses, are cached for the lifetime of the relevant view.
-- Scalar settings, rendered roster names, Group Finder identities, hover text, and overlay scale are recalculated only when their inputs change.
-- Character and last-seen persistence writes are batched after roster draws and the two-second HUD player scan.
-- World-marker geometry is calculated once when a marker is added; marker bookkeeping is cleared when a player leaves or the HUD is destroyed.
-- Party Finder note buttons bind when request rows are created instead of scanning every request widget every frame.
-
----
+Notes are stored only in the local DMF settings. PlayerNotes does not upload or share them.
 
 ## Requirements
 
 - [Darktide Mod Loader (DML)](https://www.nexusmods.com/warhammer40kdarktide/mods/19)
 - [Darktide Mod Framework (DMF)](https://www.nexusmods.com/warhammer40kdarktide/mods/8)
 
----
-
 ## Installation
 
-1. Install **DML** and **DMF** (see links above) if you haven't already.
-2. Download the [latest release](https://github.com/EduardoKenji/PlayerNotes/releases/latest).
-3. Extract the `PlayerNotes` folder into your Darktide mods directory:
-   ```
+1. Install DML and DMF.
+2. Download a PlayerNotes release.
+3. Extract the single top-level `PlayerNotes` folder into the Darktide `mods` directory. A typical Steam path is:
+
+   ```text
    Steam\steamapps\common\Warhammer 40,000 DARKTIDE\mods\PlayerNotes\
    ```
-4. Run `toggle_darktide_mods.bat` in the game root if prompted after a game update.
-5. Launch Darktide — enable **PlayerNotes** in the DMF mod list.
 
----
+4. Add `PlayerNotes` to `mod_load_order.txt` if your mod manager does not do so.
+5. Run `toggle_darktide_mods.bat` again after a game update when DML requests it.
+
+## Upgrading from 2.8.x or 2.9.x
+
+Existing notes and caches are reused. Version 2.10.0 treats Darktide's `account_id` as the canonical player identity. When an older `platform_user_id` and its corresponding account ID are both available, the stored note and related metadata are migrated automatically.
+
+Display names are never used as note identities. If two people have the same visible name, their notes remain separate.
+
+As with any mod update, keeping a backup of your DMF settings before replacing the folder is sensible.
 
 ## Usage
 
-### Adding or editing a note
+### Social panel
 
-1. Open the **Social** panel.
-2. Right-click a friend → click **Add Note** (or shows `[Note] preview...` if one exists).
-3. Type `/note <your note here>` in chat and press Enter.
+1. Open the Social panel.
+2. Open another player's context menu and choose **Add Note**, or choose the existing `[Note]` entry.
+3. Enter the note in chat:
 
-```
-/note good psyker for havoc 40 runs
-```
+   ```text
+   /note good psyker for havoc 40
+   ```
 
-### Adding or editing a Party Finder applicant's note
+### Party Finder
 
-1. Open **Party Finder** and view incoming player requests.
-2. Click the note button on an applicant's request card.
-3. Type `/note <your note here>` in chat and press Enter.
+1. Open Party Finder and view incoming player requests.
+2. Select the note button on an applicant's request card.
+3. Enter `/note <text>` in chat.
 
-The note button is positioned beside the button added by **Inspect From Party Finder**, so the two mods can be used together.
+The button is positioned to coexist with the button added by Inspect From Party Finder.
 
-### Setting a note by player tag or character name
+### Direct commands
 
-You can also set a note directly without going through the Social panel:
-
-```
+```text
 /set_note <player_tag_or_character_name> <note text>
-/set_note Potty#1031 great psyker for havoc 40
-/set_note KimJongDois great psyker for havoc 40
-```
-
-The identifier can be a platform player tag (e.g. `Potty#1031`) or a character name seen in a mission or the Social panel.
-
-### Deleting a note
-
-```
 /delete_note <player_tag_or_character_name>
-/delete_note Potty#1031
-/delete_note KimJongDois
-```
-
-### Listing all notes
-
-```
 /pn_notes
-```
-
-Shows all saved notes with player names (if cached) or their platform IDs.
-
-### Listing character-name mappings
-
-```
 /pn_chars
+/pn_notes_delete_all confirm
 ```
 
-Shows all known character name → player tag mappings. These are recorded automatically when you see a player in a mission or the Social panel.
+Examples:
 
-### Deleting all notes
-
+```text
+/set_note Potty#1031 dependable veteran
+/set_note KimJongDois good team player
+/delete_note Potty#1031
 ```
-/pn_notes_delete_all
-```
 
-Wipes ALL saved notes and the name cache. Use with caution!
+Mapped player tags may contain spaces, but they must resolve to one stored identity. If the same display name maps to multiple player identities, PlayerNotes refuses the command and asks you to select the intended player in Social or Party Finder. Character-name mappings are observational heuristics: mission observations take priority over Mourningstar observations, but character names are not globally unique.
 
-### Mod Options (F4 in-game)
+Notes are trimmed and limited to 512 Unicode characters. The inline, top-bar, and world displays use shorter previews; the hover tooltip retains the full saved note.
 
-Navigate to **PlayerNotes** in the mod options menu to toggle:
+`/pn_notes_delete_all` is intentionally non-destructive without the literal `confirm` argument. The confirmed command deletes all notes, names, character mappings, and last-seen history.
 
-- **Show inline notes** — append note preview to friend names.
-- **Show top bar** — shows "Name — Last seen in [Location] at [Date], [Time ago]" when hovering.
-- **Show tooltip** — floating tooltip box near hovered player.
-- **Show world notes** — notes above player nameplates in hub/lobby.
+## Mod options
 
-**Experimental options:**
+Open **F4 → Mod Options → PlayerNotes**.
 
-- **Show 2D world notes in missions** — also show notes above nameplates during missions (disabled by default to reduce clutter).
-- **Show session notifications** — display a notification in the top-right when entering a map if noted players are present.
+- **Show inline note text in Social roster**: show a short text preview. When off, noted players still receive a compact icon.
+- **Show note in top-left bar**: show last-seen information or a note preview while hovering.
+- **Show floating tooltip on hover**: show the full note beside the hovered row.
+- **Show note above player head**: show nearby note boxes in the Mourningstar.
+- **Show 2D world notes in missions**: extend world notes into missions; off by default.
+- **Notify when noted players are present**: show one native notification after entering a map.
+- **Enable debug mod:echo**: print the loaded version and command summary after all mods load.
 
----
+## Identity and persistence
 
-## Commands
+- Canonical key: Darktide `account_id`.
+- Compatibility key: `platform_user_id`, used only when no account ID is available and migrated when both become known.
+- Display names: labels and unique command aliases only, never authoritative note keys.
+- Last-seen history: stored only for players who currently have notes.
+- Character mappings: bounded to 250 entries and batch-trimmed to 200 using recency and mission-context preference.
+- Empty persisted tables are removed instead of serialized.
 
-| Command | Description |
-|---|---|
-| `/note <text>` | Save a note for the last selected player (via Social panel) |
-| `/set_note <tag_or_char> <text>` | Save a note by player tag or character name |
-| `/delete_note <tag_or_char>` | Delete a note by player tag or character name |
-| `/pn_notes` | List all saved notes with player names/IDs |
-| `/pn_chars` | List known character name → player tag mappings |
-| `/pn_notes_delete_all` | Wipe ALL notes and name cache (use with caution) |
+Deleting one note also removes that player's last-seen entry. Name and character mappings remain available for future direct commands until evicted or cleared.
 
----
+## Performance and reliability
+
+The 2.10.0 code keeps the 2.9.0 hot-path optimizations and adds defensive bounds:
+
+- Social names are decorated only in the Social-roster blueprint; `PlayerInfo.user_display_name` is not globally hooked.
+- Scalar settings, resolved identities, rendered names, hover text, Group Finder identities, and overlay scale are cached.
+- Identity misses and platform-only fallbacks retry after a cooldown so loading-state results do not become permanent.
+- Persisted table reads are cached; writes are dirty-flagged and batched.
+- HUD scans run every two seconds and reuse marker/seen tables.
+- Each player scan is isolated so one malformed player or marker request does not prevent cleanup or processing of the others.
+- Last-seen data grows with saved notes, not with every teammate ever encountered.
+- Character mappings and transient identity sets are bounded or rebuilt.
+- Note and widget sizes are capped.
+- Overlay rendering restores the base UI's shared layer setting even when begin, draw, or end operations fail.
+- Notification initialization has bounded retries instead of retrying forever.
+- Disable, unload, view-exit, and HUD-destroy paths release transient references and marker bookkeeping.
+
+No classic unreachable-reference leak was found in the audited paths. The main memory risks were retained lookup tables and unconstrained persisted data; both are now bounded or tied to user-owned notes.
 
 ## Compatibility
 
-Tested on the current live version of Darktide. Should be compatible with most mods.
+PlayerNotes integrates with these Darktide/DMF surfaces:
 
-**Hooks used:**
-- `social_menu_roster_view_blueprints` — scoped inline note/icon decoration
-- `ViewElementPlayerSocialPopup._set_player_info` — for right-click menu injection
-- `SocialMenuRosterView._draw_widgets` safe post-hook — for hover detection in Social panel
-- `GroupFinderView._draw_widgets` safe post-hook — for Party Finder hover tooltips
-- `group_finder_view_definitions.player_request_entry` — for the Party Finder note button
-- `UIConstantElements.draw` safe post-hook — for overlay rendering (tooltip + top-bar)
-- `HudElementWorldMarkers.init` — for world note template injection
+- `social_menu_roster_view_blueprints`
+- `ViewElementPlayerSocialPopup._set_player_info`
+- `SocialMenuRosterView.init`, `_draw_widgets`, and `on_exit`
+- `GroupFinderView._draw_widgets` and `on_exit`
+- `group_finder_view_definitions.player_request_entry`
+- `UIConstantElements.draw`
+- `HudElementWorldMarkers.init`
+- DMF custom HUD-element registration and lifecycle callbacks
 
----
+These are game implementation details and may change after a Darktide update. See [AUDIT.md](AUDIT.md) for the completed review, residual risks, and the proposed architectural follow-up.
+
+## Development and release validation
+
+Run the repository checks from its root:
+
+```powershell
+python .\tools\test_player_notes.py
+.\tools\check_release.ps1 -ExpectedVersion 2.10.0
+git diff --check
+```
+
+The Python suite uses `lupa` for Lua behavior tests and `luaparser` for syntax validation:
+
+```powershell
+python -m pip install lupa luaparser
+```
+
+Automated tests complement, but cannot replace, the in-game matrix in [RELEASING.md](RELEASING.md).
+
+## Credits
+
+- EduardoKenji: original mod and maintenance.
+- LucLeto: CPU-usage reduction work integrated in 2.9.0 and retained in 2.10.0.
 
 ## License
 

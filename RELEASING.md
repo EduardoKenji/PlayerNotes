@@ -12,20 +12,28 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 2. Run:
 
    ```powershell
-   .\tools\check_release.ps1 -ExpectedVersion 2.9.0
+   python .\tools\test_player_notes.py
+   .\tools\check_release.ps1 -ExpectedVersion 2.10.0
+   git diff --check
    ```
 
-3. Review `git diff --check` and the complete branch diff.
-4. If a Lua compiler is available, run `luac -p` for every tracked `.lua` file.
+3. Review the complete branch diff and `AUDIT.md`.
+4. Confirm all behavior tests run rather than skip. Install development dependencies with `python -m pip install lupa luaparser` when needed.
+5. If a Lua compiler is available, also run `luac -p` for every tracked `.lua` file.
 
 ## In-game smoke test
 
 - Open the Social panel and verify add/edit, inline note/icon, top bar, and tooltip behavior.
+- Verify a 513+ character and a multibyte note are bounded without corrupting text.
 - Verify player names outside the Social roster remain undecorated.
 - Close a selected-player profile and the Social panel; verify no tooltip remains.
 - Open Party Finder and verify an applicant can be selected with the note button.
 - Verify the PlayerNotes and Inspect From Party Finder buttons do not overlap.
 - Enter the Mourningstar and a mission; verify last-seen location, session notification, and world-note cleanup.
+- Load 2.8.x/2.9.x settings and verify a platform-keyed note migrates to the same player's account ID without loss.
+- If possible, use two test identities with the same visible name and verify neither can see or modify the other's note.
+- Run `/pn_notes_delete_all` without an argument and verify no data changes; use `confirm` only with disposable test data.
+- Disable and re-enable PlayerNotes while Social/Party Finder is open; verify injected UI becomes inactive and recovers cleanly.
 - Toggle each mod option, including the debug load message, and reload the mod once.
 - If ModPerformanceMonitor is available, compare Social, Party Finder, and mission costs against 2.8.1.
 - Check the Darktide console log for PlayerNotes errors.
@@ -35,10 +43,12 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 1. Package a single top-level `PlayerNotes` folder containing:
    - `PlayerNotes.mod`
    - `README.md`
+   - `AUDIT.md`
    - `CHANGELOG.md`
+   - `RELEASING.md`
    - `LICENSE`
    - `scripts/`
 2. Install that exact archive into a clean mod directory and repeat the smoke test.
 3. Merge the reviewed release branch.
-4. Create the signed or annotated tag `v2.9.0` from the merge commit.
+4. Create the signed or annotated tag `v2.10.0` from the merge commit.
 5. Publish the same archive and release notes to GitHub Releases and Nexus Mods.

@@ -10,19 +10,12 @@ return {
     btn_add_note = {
         en = "Add Note",
     },
-    btn_edit_note = {
-        en = "Edit Note",
-    },
-
     -- Echo messages
     echo_selected = {
-        en = "Selected %s - click Add/Edit Note, then type /note [your text]",
+        en = "Selected %s — type /note [text] to save.",
     },
     echo_saved = {
         en = "Note saved for %s.",
-    },
-    echo_cleared = {
-        en = "Note cleared for %s.",
     },
     echo_none_selected = {
         en = "Click Add Note or Edit Note on a player first.",
@@ -30,31 +23,19 @@ return {
     echo_usage_note = {
         en = "Usage: /note [your note text]",
     },
-    echo_usage_note_clear = {
-        en = "Usage: /note_clear",
-    },
-
-    -- Command descriptions
-    cmd_note_desc = {
-        en = "Save a note for the last selected player.",
-    },
-    cmd_note_clear_desc = {
-        en = "Clear the note for the last selected player.",
-    },
-
     -- Mod options titles
     opt_show_inline_title = {
-        en = "Show inline note in friend list",
+        en = "Show inline note text in Social roster",
     },
     opt_show_inline_title_description = {
-        en = "Appends a short note preview next to the player name in the friend list row.",
+        en = "Appends a short note preview next to the player name. When disabled, a small note indicator icon is shown instead.",
     },
 
     opt_show_top_bar_title = {
         en = "Show note in top-left bar",
     },
     opt_show_top_bar_title_description = {
-        en = "Shows 'Name — note' in a bar at the top-left of the screen when hovering a player with a note.",
+        en = "Shows the player's last-seen information, or a note preview when no history exists, in a top-left bar while hovering.",
     },
 
     opt_show_tooltip_title = {
@@ -68,14 +49,14 @@ return {
         en = "Show note above player head",
     },
     opt_show_world_notes_title_description = {
-        en = "Shows the player's note to the right of their nameplate in the game world. Always active in the Morningstar hub. Use the option below to also enable it in missions.",
+        en = "Shows the player's note above their nameplate in the game world. Active in the Mourningstar hub; use the option below to also enable it in missions.",
     },
 
     opt_experimental_group_title = {
         en = "Experimental",
     },
-    experimental_group_description = {
-        en = "Features that may affect performance or visibility. Disabled by default.",
+    opt_experimental_group_title_description = {
+        en = "Optional features whose visibility or usefulness depends on the current game mode.",
     },
 
     opt_show_world_notes_in_missions_title = {
@@ -85,7 +66,7 @@ return {
         en = "Also shows notes above player heads during missions. Disabled by default to avoid cluttering the screen during combat. Requires 'Show note above player head' to be enabled.",
     },
     opt_show_session_notifications_title = {
-        en = "Show same session noted players notifications",
+        en = "Notify when noted players are present",
     },
     opt_show_session_notifications_title_description = {
         en = "Displays a notification in the top-right when entering a map if noted players are present.",
@@ -94,12 +75,6 @@ return {
         en = "Enable debug mod:echo",
     },
     opt_debug_echo_title_description = {
-        en = "Displays the mod loading message and debug information in the chat console.",
-    },
-        opt_enable_splash_notification_title = {
-        en = "Enable splash screen notification",
-    },
-    opt_enable_splash_notification_title_description = {
-        en = "If enabled, shows a notification when the game first reaches the splash screen/hub. This is separate from mission session notifications.",
+        en = "Displays the PlayerNotes version and command summary after all mods load.",
     },
 }
