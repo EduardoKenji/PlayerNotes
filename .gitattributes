@@ -1,0 +1,4 @@
+# These legacy files are stored with CRLF in Git; treat the carriage return as
+# part of the line ending rather than trailing whitespace during diff checks.
+README.md -text whitespace=cr-at-eol
+scripts/mods/PlayerNotes/PlayerNotes.lua -text whitespace=cr-at-eol

@@ -14,13 +14,16 @@ local mod = get_mod("PlayerNotes")
 local HudElementPlayerNotes = class("HudElementPlayerNotes")
 
 local SCAN_INTERVAL = 2.0   -- seconds between full player scans
+local _mission_templates
+local _danger_utility
 
--- Returns true when the player is in a mission (not in the Morningstar/prologue hub).
+-- Returns true in a mission, false in a hub, or nil while game-mode state is
+-- not ready. The nil state must not be cached during loading transitions.
 -- Mirrors the hub detection used in hud_visibility_groups.lua and
 -- constant_element_onboarding_handler.lua: both "hub" and "prologue_hub" are hub modes.
 local function _is_in_mission()
     local gm = Managers.state and Managers.state.game_mode
-    if not gm then return false end
+    if not gm then return nil end
     local name = gm:game_mode_name()
     return name ~= "hub" and name ~= "prologue_hub"
 end
@@ -39,8 +42,11 @@ local function _get_current_location()
 
         -- Resolve human-readable mission name via the mission template.
         -- Template's mission_name field is a localization key (e.g. "loc_mission_name_cm_archives").
-        local ok_tmpl, MissionTemplates = pcall(require, "scripts/settings/mission/mission_templates")
-        local template    = ok_tmpl and MissionTemplates and MissionTemplates[mission_key]
+        if _mission_templates == nil then
+            local ok_tmpl, result = pcall(require, "scripts/settings/mission/mission_templates")
+            _mission_templates = ok_tmpl and result or false
+        end
+        local template    = _mission_templates and _mission_templates[mission_key]
         local loc_key     = template and template.mission_name
         local display_name
         if loc_key then
@@ -55,7 +61,7 @@ local function _get_current_location()
         local diff_mgr = Managers.state.difficulty
         if diff_mgr then
             -- Havoc: has its own rank number, takes priority.
-            local ok_hav, havoc_data = pcall(function() return diff_mgr:get_parsed_havoc_data() end)
+            local ok_hav, havoc_data = pcall(diff_mgr.get_parsed_havoc_data, diff_mgr)
             if ok_hav and havoc_data and havoc_data.havoc_rank then
                 suffix = " (Havoc " .. tostring(havoc_data.havoc_rank) .. ")"
             else
@@ -71,11 +77,14 @@ local function _get_current_location()
                 -- board and expedition view both use.
                 -- Auric = challenge 5 + resistance 5; Damnation = challenge 5 + resistance 4.
                 local is_auric = false
-                local ok_d, Danger = pcall(require, "scripts/utilities/danger")
-                if ok_d and Danger then
+                if _danger_utility == nil then
+                    local ok_d, result = pcall(require, "scripts/utilities/danger")
+                    _danger_utility = ok_d and result or false
+                end
+                if _danger_utility then
                     local ch = diff_mgr:get_challenge()
                     local rs = diff_mgr:get_resistance()
-                    local ok_tier, tier = pcall(function() return Danger.danger_by_difficulty(ch, rs) end)
+                    local ok_tier, tier = pcall(_danger_utility.danger_by_difficulty, ch, rs)
                     is_auric = ok_tier and tier and tier.is_auric or false
                 end
 
@@ -98,7 +107,8 @@ HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._active        = {}       -- player_unit → marker_id
     self._active_notes  = {}       -- player_unit → note text (for change detection)
     self._seen_buffer   = {}       -- Persistent buffer to avoid RAM churn
-    self._marker_data_buffer = {}  -- Reusable market data table
+    self._in_mission    = nil
+    self._current_location = nil
     
     -- Start the notification timer whenever the HUD is created.
     -- This covers initial login, loading into missions, AND changing operatives.
@@ -133,7 +143,14 @@ HudElementPlayerNotes._scan_players = function(self)
         return
     end
 
-    if _is_in_mission() and not mod:get("show_world_notes_in_missions") then
+    local in_mission = _is_in_mission()
+    if in_mission == nil then return end
+    if self._in_mission ~= in_mission then
+        self._in_mission = in_mission
+        self._current_location = nil
+    end
+
+    if in_mission and not mod:get("show_world_notes_in_missions") then
         self:_clear_all_markers()
         return
     end
@@ -144,11 +161,14 @@ HudElementPlayerNotes._scan_players = function(self)
     -- BUG 2 FIX: Only determine location if we are actually in a state to do so.
     -- If we are in a mission but the resolver returns nil, current_location remains nil.
     -- This prevents "Mourningstar" from being accidentally sent during mission load screens.
-    local current_location = nil
-    if _is_in_mission() then
-        current_location = _get_current_location()
-    else
-        current_location = "Mourningstar"
+    local current_location = self._current_location
+    if current_location == nil then
+        if in_mission then
+            current_location = _get_current_location()
+        else
+            current_location = "Mourningstar"
+        end
+        self._current_location = current_location
     end
 
     -- ALIVE is a Stingray engine global. Guard against the brief window during
@@ -205,6 +225,7 @@ HudElementPlayerNotes._scan_players = function(self)
                     if self._active[unit] then
                         event_mgr:trigger("remove_world_marker", self._active[unit])
                         self._active[unit] = nil
+                        self._active_notes[unit] = nil
                     end
                     break
                 end
@@ -219,17 +240,13 @@ HudElementPlayerNotes._scan_players = function(self)
                     self._active_notes[unit] = nil
                 end
 
-                -- MEMORY OPTIMIZATION: Reuse the buffer table instead of creating a new one per player per scan.
-                self._marker_data_buffer.puid = puid
-                self._marker_data_buffer.note = note
-
                 local captured_unit = unit
                 event_mgr:trigger("add_world_marker_unit", "pn_note", unit,
                     function(marker_id)
                         self._active[captured_unit]       = marker_id
                         self._active_notes[captured_unit] = note
                     end,
-                    self._marker_data_buffer)
+                    { puid = puid, note = note })
             until true
         end
     end)
@@ -244,19 +261,29 @@ HudElementPlayerNotes._scan_players = function(self)
                 event_mgr:trigger("remove_world_marker", marker_id)
             end
             self._active[unit] = nil
+            self._active_notes[unit] = nil
         end
     end
 end
 
 HudElementPlayerNotes._clear_all_markers = function(self)
+    if not next(self._active) then
+        table.clear(self._active_notes)
+        return
+    end
+
     local event_mgr = Managers.event
     for unit, marker_id in pairs(self._active) do
-        if marker_id then
+        if marker_id and event_mgr then
             event_mgr:trigger("remove_world_marker", marker_id)
         end
     end
     table.clear(self._active)
     table.clear(self._active_notes)
+end
+
+HudElementPlayerNotes.destroy = function(self)
+    self:_clear_all_markers()
 end
 
 return HudElementPlayerNotes

@@ -1,4 +1,4 @@
-# PlayerNotes v2.7.4
+# PlayerNotes v2.9.0
 
 **Persistent notes for your Darktide friends/acquaintances** — add/edit free-text notes on any Steam, Xbox, or PSN friend and see them instantly in the Social panel, Party Finder, and in-world above player nameplates.
 
@@ -14,10 +14,23 @@
 - **Last-Seen Tracking** — Automatically records where and when you last encountered a player, including mission name and difficulty (e.g., *Havoc 40, Auric, or Auric Maelstrom*).
 - **Session Notifications** — Get a native game notification upon entering a map if players with saved notes are present in your current session.
 - **World notes** — Stylized note boxes appear above player nameplates in-game (within ~15m range).
-- **Party Finder support** — Hover tooltips work for join requesters in Group Finder.
+- **Party Finder support** — add/edit notes for join requesters from their request card and hover them to see saved notes.
 - **Persistent** — Notes and location history survive game restarts.
 - **Platform-stable keys** — Keyed by `platform_user_id` (Steam/Xbox/PSN ID) with fallback to `account_id` for cross-platform offline friends.
 - **Performance Optimized** — Implements LRU (Least Recently Used) caching for character mappings and table reuse to minimize RAM churn and Garbage Collection (GC) spikes.
+
+---
+
+## Performance
+
+The 2.9.0 codebase incorporates LucLeto's CPU-usage improvements:
+
+- UI draw integrations use post-only safe hooks, keeping the base game's draw work out of PlayerNotes callbacks.
+- Player identity lookups, including misses, are cached for the lifetime of the relevant view.
+- Hover state avoids redundant resets and repeated last-seen formatting.
+- Character and last-seen persistence writes are batched during the two-second HUD player scan.
+- World-marker payloads are created only when a marker is added or changed, and all marker bookkeeping is cleared when a player leaves or the HUD is destroyed.
+- Party Finder note buttons bind when request rows are created instead of scanning every request widget every frame.
 
 ---
 
@@ -52,6 +65,14 @@
 ```
 /note good psyker for havoc 40 runs
 ```
+
+### Adding or editing a Party Finder applicant's note
+
+1. Open **Party Finder** and view incoming player requests.
+2. Click the note button on an applicant's request card.
+3. Type `/note <your note here>` in chat and press Enter.
+
+The note button is positioned beside the button added by **Inspect From Party Finder**, so the two mods can be used together.
 
 ### Setting a note by player tag or character name
 
@@ -133,9 +154,10 @@ Tested on the current live version of Darktide. Should be compatible with most m
 **Hooks used:**
 - `PlayerInfo.user_display_name` — for inline note display
 - `ViewElementPlayerSocialPopup._set_player_info` — for right-click menu injection
-- `SocialMenuRosterView._draw_widgets` — for hover detection in Social panel
-- `GroupFinderView._draw_widgets` — for Party Finder hover tooltips
-- `UIConstantElements.draw` — for overlay rendering (tooltip + top-bar)
+- `SocialMenuRosterView._draw_widgets` safe post-hook — for hover detection in Social panel
+- `GroupFinderView._draw_widgets` safe post-hook — for Party Finder hover tooltips
+- `group_finder_view_definitions.player_request_entry` — for the Party Finder note button
+- `UIConstantElements.draw` safe post-hook — for overlay rendering (tooltip + top-bar)
 - `HudElementWorldMarkers.init` — for world note template injection
 
 ---

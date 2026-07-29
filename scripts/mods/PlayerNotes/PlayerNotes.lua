@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.7.4
+    Version: 2.9.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
@@ -35,6 +35,7 @@ local UIWidget            = require("scripts/managers/ui/ui_widget")
 local UIRenderer          = require("scripts/managers/ui/ui_renderer")
 local UIScenegraph        = require("scripts/managers/ui/ui_scenegraph")
 local UIWorkspaceSettings = require("scripts/settings/ui/ui_workspace_settings")
+local ButtonPassTemplates = require("scripts/ui/pass_templates/button_pass_templates")
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- WORLD NOTES — path used as the element filename in register_hud_element.
@@ -1224,6 +1225,204 @@ mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
+-- HOOK 9: "Add Note" button in Party Finder player-request entries
+--
+-- This feature shipped in the Nexus 2.8.0 package but was never committed to
+-- the repository. Bind each button when its blueprint creates the row instead
+-- of scanning every request widget from GroupFinderView.update each frame.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local function player_request_note_button_change(content, style)
+    ButtonPassTemplates.terminal_button_change_function(content, style, "pn_note_hotspot")
+end
+
+local function player_request_note_button_hover_change(content, style)
+    ButtonPassTemplates.terminal_button_hover_change_function(content, style, "pn_note_hotspot")
+end
+
+local function player_request_note_button_visible(content)
+    local element = content and (content.element or content.parent and content.parent.element)
+    local ui_manager = Managers.ui
+
+    return element
+        and not element.is_preview
+        and ui_manager
+        and ui_manager:using_cursor_navigation()
+end
+
+local function select_group_finder_player(account_id)
+    local social_service = Managers.data_service and Managers.data_service.social
+    local player_info = account_id
+        and social_service
+        and social_service:get_player_info_by_account_id(account_id)
+
+    if not player_info then
+        mod:echo("[PlayerNotes] Could not resolve player info for this applicant.")
+        return
+    end
+
+    local puid = get_cached_player_key(player_info)
+    if not puid then
+        mod:echo("[PlayerNotes] Could not resolve a stable ID for this applicant.")
+        return
+    end
+
+    -- user_display_name() passes through Hook 1, which caches the undecorated
+    -- name before returning any inline note/icon decoration.
+    local returned_name = player_info:user_display_name(true, true)
+    local display_name = get_cached_name(puid) or returned_name or "player"
+
+    mod._editing_puid = puid
+    mod._editing_name = display_name
+    save_player_name(puid, display_name)
+    mod:echo(string.format(STR_SELECTED, display_name))
+end
+
+mod:hook_require("scripts/ui/views/group_finder_view/group_finder_view_definitions", function(definitions)
+    local blueprints = definitions and definitions.grid_blueprints
+    local blueprint = blueprints and blueprints.player_request_entry
+    local pass_template = blueprint and blueprint.pass_template
+
+    if not blueprint or type(pass_template) ~= "table" then
+        return
+    end
+
+    if not table.find_by_key(pass_template, "style_id", "pn_note_hotspot") then
+        local note_passes = {
+            {
+                style_id   = "pn_note_hotspot",
+                pass_type  = "hotspot",
+                content_id = "pn_note_hotspot",
+                content    = {},
+                style = {
+                    vertical_alignment   = "center",
+                    horizontal_alignment = "right",
+                    offset = { -190, 0, 5 },
+                    size   = { 40, 40 },
+                },
+                visibility_function = player_request_note_button_visible,
+            },
+            {
+                pass_type  = "texture",
+                style_id   = "pn_note_background",
+                value      = "content/ui/materials/backgrounds/default_square",
+                style = {
+                    vertical_alignment   = "center",
+                    horizontal_alignment = "right",
+                    offset = { -190, 0, 5 },
+                    size   = { 40, 40 },
+                    default_color  = Color.terminal_background(nil, true),
+                    selected_color = Color.terminal_background_selected(nil, true),
+                },
+                change_function     = player_request_note_button_change,
+                visibility_function = player_request_note_button_visible,
+            },
+            {
+                pass_type  = "texture",
+                style_id   = "pn_note_background_gradient",
+                value      = "content/ui/materials/gradients/gradient_vertical",
+                style = {
+                    vertical_alignment   = "center",
+                    horizontal_alignment = "right",
+                    offset = { -190, 0, 6 },
+                    size   = { 40, 40 },
+                    color  = Color.terminal_background_gradient(nil, true),
+                },
+                change_function     = player_request_note_button_hover_change,
+                visibility_function = player_request_note_button_visible,
+            },
+            {
+                style_id  = "pn_note_icon",
+                pass_type = "texture",
+                value     = "content/ui/materials/icons/system/escape/credits",
+                style = {
+                    vertical_alignment   = "center",
+                    horizontal_alignment = "right",
+                    offset = { -190, 0, 7 },
+                    size   = { 40, 40 },
+                },
+                visibility_function = player_request_note_button_visible,
+            },
+            {
+                pass_type  = "texture",
+                style_id   = "pn_note_frame",
+                value      = "content/ui/materials/frames/frame_tile_2px",
+                style = {
+                    vertical_alignment   = "center",
+                    scale_to_material    = true,
+                    horizontal_alignment = "right",
+                    offset = { -190, 0, 7 },
+                    size   = { 40, 40 },
+                    default_color  = Color.terminal_frame(nil, true),
+                    selected_color = Color.terminal_frame_selected(nil, true),
+                },
+                change_function     = player_request_note_button_change,
+                visibility_function = player_request_note_button_visible,
+            },
+            {
+                pass_type  = "texture",
+                style_id   = "pn_note_corner",
+                value      = "content/ui/materials/frames/frame_corner_2px",
+                style = {
+                    vertical_alignment   = "center",
+                    scale_to_material    = true,
+                    horizontal_alignment = "right",
+                    offset = { -190, 0, 8 },
+                    size   = { 40, 40 },
+                    default_color  = Color.terminal_corner(nil, true),
+                    selected_color = Color.terminal_corner_selected(nil, true),
+                },
+                change_function     = player_request_note_button_change,
+                visibility_function = player_request_note_button_visible,
+            },
+            {
+                style_id  = "pn_note_outer_shadow",
+                pass_type = "texture",
+                value     = "content/ui/materials/frames/dropshadow_medium",
+                style = {
+                    vertical_alignment   = "center",
+                    scale_to_material    = true,
+                    horizontal_alignment = "right",
+                    offset        = { -180, 0, 8 },
+                    size          = { 40, 40 },
+                    size_addition = { 20, 20 },
+                    color         = Color.black(200, true),
+                },
+                visibility_function = player_request_note_button_visible,
+            },
+        }
+
+        table.append(pass_template, note_passes)
+    end
+
+    if blueprint.init then
+        mod:hook(blueprint, "init",
+            function(func, parent, widget, element, callback_name, secondary_callback_name, ui_renderer, ...)
+                local result = func(
+                    parent,
+                    widget,
+                    element,
+                    callback_name,
+                    secondary_callback_name,
+                    ui_renderer,
+                    ...
+                )
+                local hotspot = widget and widget.content and widget.content.pn_note_hotspot
+                local account_id = element and element.account_id
+
+                if hotspot and account_id then
+                    hotspot.pressed_callback = function()
+                        select_group_finder_player(account_id)
+                    end
+                end
+
+                return result
+            end
+        )
+    end
+end)
+
+-- ──────────────────────────────────────────────────────────────────────────────
 -- COMMAND: /note <text>
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -1278,7 +1477,7 @@ mod:command("pn_notes", "List all saved PlayerNotes.", function()
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
--- HOOK 9: Inject "pn_note" template into HudElementWorldMarkers
+-- HOOK 10: Inject "pn_note" template into HudElementWorldMarkers
 --
 -- HudElementWorldMarkers.init populates self._marker_templates from a static
 -- settings list. We inject our template after that loop runs so that
@@ -1294,7 +1493,7 @@ mod:hook_safe("HudElementWorldMarkers", "init", function(self)
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
--- HOOK 10: Register HudElementPlayerNotes via DMF's proper HUD element API
+-- HOOK 11: Register HudElementPlayerNotes via DMF's proper HUD element API
 --
 -- mod:register_hud_element() wraps injection in safe_call_nrc, so a missing
 -- or broken element file logs a DMF error instead of crashing the game.
@@ -1477,6 +1676,6 @@ end
 
 mod.on_all_mods_loaded = function()
     if mod:get("enable_debug_echo") then
-        mod:echo("[PlayerNotes] v2.7.4 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+        mod:echo("[PlayerNotes] v2.9.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
     end
 end
