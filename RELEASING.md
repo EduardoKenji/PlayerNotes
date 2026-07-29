@@ -31,6 +31,8 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 - Verify the PlayerNotes and Inspect From Party Finder buttons do not overlap.
 - Enter the Mourningstar and a mission; verify last-seen location, session notification, and world-note cleanup.
 - Load 2.8.x/2.9.x settings and verify a platform-keyed note migrates to the same player's account ID without loss.
+- Hover a noted cross-network friend while offline and verify their full `name#1234` tag still resolves the tooltip and migrates the legacy key only when unique.
+- Disable world-note rendering, target a visible Mourningstar character with `/set_note <character> <text>`, and verify the command resolves without first opening Social.
 - If possible, use two test identities with the same visible name and verify neither can see or modify the other's note.
 - Run `/pn_notes_delete_all` without an argument and verify no data changes; use `confirm` only with disposable test data.
 - Disable and re-enable PlayerNotes while Social/Party Finder is open; verify injected UI becomes inactive and recovers cleanly.

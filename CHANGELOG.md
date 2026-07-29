@@ -23,6 +23,9 @@ All notable PlayerNotes changes are documented here.
 
 ### Fixed
 
+- Restored notes for offline cross-network friends by safely migrating a single stored `name#1234` platform alias to the canonical account ID; plain and ambiguous names remain excluded.
+- Made `/set_note` refresh currently visible players on a cache miss, even when world markers are disabled or Social player information is still loading.
+- Decoupled live identity and last-seen scans from world-marker visibility settings.
 - Fixed startup localization errors by passing `%s` replacements through DMF's localization API instead of caching incomplete format templates.
 - Restored the base UI's shared render layer and closed the PlayerNotes pass after protected overlay failures.
 - Isolated HUD scans per player so one malformed player or marker request cannot prevent other players from being processed or stale markers from being cleaned.

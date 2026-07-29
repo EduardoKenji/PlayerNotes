@@ -27,8 +27,8 @@ The release-candidate changes resolve the actionable high-risk items without att
 
 | Severity | Area | Finding | 2.10.0 resolution |
 |---|---|---|---|
-| High | Identity/privacy | Display-name fallback could show or mutate one player's note for a different player with the same visible name. | Note rendering is strictly identity-bound. Ambiguous name commands are rejected. |
-| High | Identity/migration | The mod preferred `platform_user_id`, while Darktide's own social model treats `account_id` as the backend identity. | `account_id` is canonical; legacy platform-keyed notes and metadata migrate when both IDs are known. |
+| High | Identity/privacy | Display-name fallback could show or mutate one player's note for a different player with the same visible name. | General note lookup is identity-bound. Only a unique discriminated `name#1234` tag may reconcile a known legacy alias; plain and ambiguous names never do. |
+| High | Identity/migration | The mod preferred `platform_user_id`, while Darktide's own social model treats `account_id` as the backend identity. Offline cross-network records can hide the legacy platform ID entirely. | `account_id` is canonical; legacy platform-keyed data migrates when both IDs are known or when one unique discriminated tag safely joins the offline account record to its stored alias. |
 | High | UI reliability | Overlay rendering temporarily changed a shared base-UI `start_layer` and could fail before restoring it or ending its pass. | Begin, widget draw, and end operations are isolated; the layer is restored on every handled failure path. |
 | High | Persistence growth | Last-seen data was stored for every encountered teammate and had no bound. | Last-seen is recorded only for noted players and removed when their note is deleted. |
 | High | HUD reliability | One malformed player, unavailable manager, or marker failure could abort a full scan or repeatedly raise. | Manager/method guards, per-player isolation, cleanup-after-error, and rate-limited reporting were added. |
@@ -37,6 +37,7 @@ The release-candidate changes resolve the actionable high-risk items without att
 | Medium | Memory retention | Session lookup tables retained stale PlayerInfo, roster, Group Finder, character, and identity-index state longer than needed. | Weak-key caches, view/game/HUD cleanup, cooldown-based miss retries, and identity-index rebuilds bound transient retention. |
 | Medium | UI allocation/size | Imported or manually edited notes had no bound and could create oversized strings and widgets. | Notes are trimmed and capped at 512 Unicode characters; inline, top-bar, world, and tooltip geometry are independently bounded. |
 | Medium | Character mapping | A Mourningstar observation cached in the session could prevent a later mission observation from taking priority. | Session deduplication now tracks context and permits the mission upgrade. |
+| Medium | Command discovery | `/set_note` depended on a periodic world-marker scan and a fully populated Social record, so a currently visible player could remain unknown. | Unresolved commands synchronously refresh bounded character aliases from live players using canonical account IDs; periodic identity scans continue even when markers are disabled. |
 | Medium | World markers | Marker bookkeeping and payload handling could retain stale note state or couple requests. | Payloads are independent; changed/deleted/departed players are removed; buffers clear on destroy. |
 | Medium | Disable/unload | Blueprint mutations survive module disable, so added roster/Party Finder behavior could remain visible without an explicit state gate. | Runtime visibility and decoration honor the enabled state; transient state flushes and clears on disable/unload. |
 | Medium | Destructive command | `/pn_notes_delete_all` deleted all user data immediately. | Literal `/pn_notes_delete_all confirm` is required. |
@@ -110,15 +111,19 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
 ## Verification performed
 
 - Parsed every tracked Lua file with `luaparser`.
-- Executed nine behavior tests through Lupa:
+- Executed thirteen behavior tests through Lupa:
   - Platform-key to account-key migration across all persisted structures.
+  - Unique discriminated-tag migration for offline cross-platform roster records.
+  - Refusal to migrate an ambiguous discriminated tag.
   - Loading-state platform fallback upgrading to account identity after its cooldown.
   - Malformed persisted entry normalization and pruning.
   - No display-name note fallback.
+  - Command-time discovery of a visible player without Social-service data.
   - Note size bound and last-seen deletion.
   - Destructive-command confirmation.
   - Session-notification local-player exclusion and bot handling.
   - Overlay layer/pass cleanup after an injected widget-draw failure.
+  - Character mapping while world-marker rendering is disabled.
   - Continued HUD player processing and persistence after one marker request fails.
 - Validated every localization key referenced by code and option metadata.
 - Compared identity order, hook behavior, marker callback behavior, and lifecycle assumptions against the local Darktide and DMF sources.

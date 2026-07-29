@@ -764,6 +764,47 @@ local function get_ids_for_name(display_name)
     return type(ids) == "table" and ids or nil
 end
 
+-- Fatshark-style cross-network tags include a numeric discriminator. They are
+-- sufficiently specific to reconcile the same player when an offline roster
+-- record exposes account_id but an older note was saved under platform_user_id.
+-- Plain display/character names are deliberately excluded: they are not unique.
+local function get_unique_discriminated_tag_id(display_name)
+    if type(display_name) ~= "string"
+        or not string.find(display_name, "#%d+$") then
+        return nil
+    end
+
+    local ids = get_ids_for_name(display_name)
+    if not ids then return nil end
+
+    local unique_ids = {}
+    local resolved_id
+    local count = 0
+    for _, player_id in ipairs(ids) do
+        if valid_player_id(player_id) and not unique_ids[player_id] then
+            unique_ids[player_id] = true
+            resolved_id = player_id
+            count = count + 1
+            if count > 1 then return nil end
+        end
+    end
+    return count == 1 and resolved_id or nil
+end
+
+local function reconcile_discriminated_tag_identity(display_name, canonical_id)
+    if not valid_player_id(canonical_id) then return end
+
+    local alias_id = get_unique_discriminated_tag_id(display_name)
+    if alias_id and alias_id ~= canonical_id and _stored_player_ids[alias_id] then
+        migrate_player_id(alias_id, canonical_id)
+    end
+end
+
+local function get_unique_discriminated_tag_note(display_name)
+    local player_id = get_unique_discriminated_tag_id(display_name)
+    return player_id and get_note(player_id) or nil, player_id
+end
+
 -- ──────────────────────────────────────────────────────────────────────────────
 -- CHARACTER NAME → PLAYER MAPPING
 -- char_to_player[char_name] = { puid, display_name, last_seen, context }
@@ -876,6 +917,70 @@ local function update_char_to_player(char_name, puid, display_name, context)
 end
 
 _api.update_char = update_char_to_player
+
+-- Refresh command aliases directly from the live player list. This path does
+-- not depend on world-marker settings or on PlayerInfo being fully populated:
+-- player:account_id() is already the canonical identity used by PlayerNotes.
+local function refresh_live_player_mappings()
+    local managers = rawget(_G, "Managers")
+    local player_manager = managers and managers.player
+    if not player_manager then return false end
+
+    local players = safe_method(player_manager, "players")
+    if type(players) ~= "table" then return false end
+
+    local social = managers.data_service and managers.data_service.social
+    local local_player = safe_method(player_manager, "local_player", 1)
+    local game_mode = managers.state and managers.state.game_mode
+    local game_mode_name = safe_method(game_mode, "game_mode_name")
+    local context = game_mode_name
+        and game_mode_name ~= "hub"
+        and game_mode_name ~= "prologue_hub"
+        and "mission"
+        or "hub"
+    local observed = false
+
+    for _, player in pairs(players) do
+        if player ~= local_player
+            and safe_method(player, "is_human_controlled") ~= false then
+            local account_id = safe_method(player, "account_id")
+            local player_info = valid_player_id(account_id)
+                and social
+                and safe_method(
+                    social,
+                    "get_player_info_by_account_id",
+                    account_id
+                )
+            local puid = player_info and get_cached_player_key(player_info)
+                or (valid_player_id(account_id) and account_id)
+            local char_name = safe_method(player, "name")
+            local is_blocked = player_info
+                and safe_method(player_info, "is_blocked")
+
+            if puid
+                and type(char_name) == "string"
+                and char_name ~= ""
+                and is_blocked ~= true then
+                local display_name = player_info
+                    and get_player_display_name(player_info, true, true)
+                    or get_cached_name(puid)
+                    or ""
+                update_char_to_player(
+                    char_name,
+                    puid,
+                    display_name,
+                    context
+                )
+                observed = true
+            end
+        end
+    end
+
+    if observed and flush_persistence then flush_persistence() end
+    return observed
+end
+
+_api.refresh_live_players = refresh_live_player_mappings
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- LAST-SEEN TRACKING
@@ -1366,7 +1471,7 @@ end
 local function decorate_roster_account_name(content)
     local player_info = content and content.player_info
     local raw_name = content and content.pn_raw_account_name
-    if not player_info or not raw_name or raw_name == "" then return end
+    if not raw_name or raw_name == "" then return end
     if not _is_enabled then
         content.account_name = raw_name
         return
@@ -1376,6 +1481,7 @@ local function decorate_roster_account_name(content)
         content.pn_player_info = player_info
         content.pn_note_revision = nil
         content.pn_rendered_account_name = nil
+        content.pn_identity_reconciled = nil
     end
 
     if content.is_own_player then
@@ -1383,7 +1489,7 @@ local function decorate_roster_account_name(content)
         return
     end
 
-    local puid = get_cached_player_key(player_info)
+    local puid = player_info and get_cached_player_key(player_info)
     if puid then
         _raw_names[puid] = raw_name
     end
@@ -1413,12 +1519,20 @@ local function decorate_roster_account_name(content)
 
     if content.pn_note_revision == _notes_revision
         and content.pn_cached_raw_name == raw_name
-        and content.pn_rendered_account_name then
+        and content.pn_rendered_account_name
+        and content.pn_identity_reconciled then
         content.account_name = content.pn_rendered_account_name
         return
     end
 
+    if puid then
+        reconcile_discriminated_tag_identity(raw_name, puid)
+    end
+    content.pn_identity_reconciled = true
     local note = puid and get_note(puid) or nil
+    if not note then
+        note = get_unique_discriminated_tag_note(raw_name)
+    end
     local rendered_name = raw_name
     if note and note ~= "" then
         if _settings.show_inline then
@@ -1486,6 +1600,9 @@ local function augment_social_popup(parent, player_info, menu_items, num_menu_it
     local puid = get_cached_player_key(player_info)
     local display_name = get_player_display_name(player_info, true, true) or "player"
     local is_own_player = safe_method(player_info, "is_own_player") == true
+    if puid then
+        reconcile_discriminated_tag_identity(display_name, puid)
+    end
 
     if not is_own_player and puid then
         if safe_method(player_info, "is_blocked") == false then
@@ -1548,6 +1665,10 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "init", function(self, ...)
         mod._editing_puid = get_cached_player_key(player_info)
         mod._editing_name = get_player_display_name(player_info, true, true)
         if mod._editing_puid then
+            reconcile_discriminated_tag_identity(
+                mod._editing_name,
+                mod._editing_puid
+            )
             save_player_name(mod._editing_puid, mod._editing_name)
         end
         mod:echo(mod:localize("echo_selected", mod._editing_name or "player"))
@@ -1670,7 +1791,16 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "_draw_widgets",
                         mod._last_hovered_key = hover_key
                         local note = nil
                         if not is_own_player then
+                            if puid then
+                                reconcile_discriminated_tag_identity(raw_name, puid)
+                            end
                             note = puid and get_note(puid) or nil
+                            if not note then
+                                local tagged_note, tagged_puid =
+                                    get_unique_discriminated_tag_note(raw_name)
+                                note = tagged_note
+                                puid = puid or tagged_puid
+                            end
                         end
 
                         if note then
@@ -2258,14 +2388,15 @@ mod:register_hud_element({
 --   • A character name       — e.g. KimJongDois  or  OldWitch
 --
 -- Lookup order:
---   1. name_to_ids map   (populated whenever a noted player is visible in Social)
---   2. char_to_player map (populated from Social roster and mission scans)
+--   1. name_to_ids map   (populated whenever a note is saved)
+--   2. char_to_player map (populated from Social/live-player observations)
+--   3. one synchronous live-player refresh when the cached lookup misses
 --
--- If unrecognised, the player must first be seen in the Social panel or in a
--- mission so the mod can build the mapping.
+-- If still unrecognised, the player is not currently visible and has not been
+-- observed recently enough for the bounded character cache to retain them.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-local function resolve_set_note_arguments(args)
+local function resolve_set_note_arguments_once(args)
     -- DMF supplies chat-command words separately. Try the longest possible
     -- identifier prefix so mapped display names containing spaces remain usable.
     for split_at = #args - 1, 1, -1 do
@@ -2281,6 +2412,20 @@ local function resolve_set_note_arguments(args)
     end
 
     return nil, nil, nil, args[1], table.concat(args, " ", 2)
+end
+
+local function resolve_set_note_arguments(args)
+    local puid, display_name, match_type, identifier, text =
+        resolve_set_note_arguments_once(args)
+    if puid or match_type == "ambiguous" then
+        return puid, display_name, match_type, identifier, text
+    end
+
+    -- A visible Mourningstar/mission player may not have reached the periodic
+    -- HUD scan yet, and that scan may be running with marker rendering disabled.
+    -- Refresh from Managers.player synchronously, then retry the same parse.
+    refresh_live_player_mappings()
+    return resolve_set_note_arguments_once(args)
 end
 
 mod:command("set_note", "<player_tag_or_character_name> <note> | Set a note for a player by their player tag or character name.", function(...)
@@ -2311,7 +2456,15 @@ mod:command("set_note", "<player_tag_or_character_name> <note> | Set a note for 
     local _, was_truncated = save_note(puid, text, display_name)
 
     if match_type == "character" then
-        mod:echo(string.format("Note saved for %s (character of %s).", identifier, display_name or "?"))
+        local account_label = type(display_name) == "string"
+            and display_name ~= ""
+            and display_name
+            or "unknown account"
+        mod:echo(string.format(
+            "Note saved for %s (character of %s).",
+            identifier,
+            account_label
+        ))
     else
         mod:echo(string.format("Note saved for %s.", display_name or identifier))
     end

@@ -30,6 +30,7 @@ mod = {
     _commands = {},
     _hooks = {},
     _safe_hooks = {},
+    _require_hooks = {},
     _echoes = {},
     _set_counts = {},
 }
@@ -76,8 +77,7 @@ function mod:hook_safe(target, method_name, callback_function)
 end
 
 function mod:hook_require(path, callback_function)
-    -- Module mutations are integration-tested in Darktide. Avoid fabricating
-    -- entire view definitions in this focused behavioral harness.
+    self._require_hooks[path] = callback_function
 end
 
 function mod:register_hud_element(definition)
@@ -274,6 +274,159 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
         self.assertEqual(
             mod._settings.player_last_seen["account-new"]["loc"], "Mourningstar"
         )
+
+    def test_offline_cross_platform_tag_migrates_to_account_identity(self):
+        lua, mod = self.make_runtime(
+            {
+                "show_inline": True,
+                "player_notes": {"platform-old": "offline friend"},
+                "player_names": {"platform-old": "La'zaros#1215"},
+                "name_to_ids": {"La'zaros#1215": ["platform-old"]},
+            }
+        )
+
+        rendered_name = lua.execute(
+            """
+            local install_blueprint_hook = ...
+            local blueprints = {
+                friend = {
+                    pass_template = {
+                        {
+                            style_id = "account_name",
+                            change_function = function(content)
+                                content.account_name = content.source_name
+                            end,
+                        },
+                    },
+                },
+            }
+            install_blueprint_hook(blueprints)
+
+            local player_info = {
+                account_id = function() return "account-new" end,
+                platform_user_id = function() return "" end,
+                user_display_name = function() return "La'zaros#1215" end,
+                is_own_player = function() return false end,
+                is_blocked = function() return false end,
+                character_name = function() return nil end,
+            }
+            local content = {
+                source_name = "La'zaros#1215",
+                account_name = "La'zaros#1215",
+                player_info = player_info,
+                is_own_player = false,
+            }
+            blueprints.friend.pass_template[1].change_function(content, {})
+            return content.account_name
+            """,
+            mod._require_hooks[
+                "scripts/ui/views/social_menu_roster_view/"
+                "social_menu_roster_view_blueprints"
+            ],
+        )
+        mod._api.flush()
+
+        self.assertEqual(rendered_name, "La'zaros#1215 · offline friend")
+        self.assertEqual(mod._settings.player_notes["account-new"], "offline friend")
+        self.assertIsNone(mod._settings.player_notes["platform-old"])
+        self.assertEqual(
+            mod._settings.name_to_ids["La'zaros#1215"][1], "account-new"
+        )
+
+    def test_ambiguous_cross_platform_tag_does_not_migrate(self):
+        lua, mod = self.make_runtime(
+            {
+                "show_inline": True,
+                "player_notes": {"platform-a": "private note"},
+                "name_to_ids": {
+                    "Duplicate#1215": ["platform-a", "platform-b"]
+                },
+            }
+        )
+
+        rendered_name = lua.execute(
+            """
+            local install_blueprint_hook = ...
+            local blueprints = {
+                friend = {
+                    pass_template = {
+                        {
+                            style_id = "account_name",
+                            change_function = function(content)
+                                content.account_name = content.source_name
+                            end,
+                        },
+                    },
+                },
+            }
+            install_blueprint_hook(blueprints)
+            local content = {
+                source_name = "Duplicate#1215",
+                account_name = "Duplicate#1215",
+                player_info = {
+                    account_id = function() return "account-new" end,
+                    platform_user_id = function() return "" end,
+                    is_own_player = function() return false end,
+                    is_blocked = function() return false end,
+                    character_name = function() return nil end,
+                },
+                is_own_player = false,
+            }
+            blueprints.friend.pass_template[1].change_function(content, {})
+            return content.account_name
+            """,
+            mod._require_hooks[
+                "scripts/ui/views/social_menu_roster_view/"
+                "social_menu_roster_view_blueprints"
+            ],
+        )
+        mod._api.flush()
+
+        self.assertEqual(rendered_name, "Duplicate#1215")
+        self.assertEqual(mod._settings.player_notes["platform-a"], "private note")
+        self.assertIsNone(mod._settings.player_notes["account-new"])
+
+    def test_set_note_refreshes_visible_player_without_social_info(self):
+        lua, mod = self.make_runtime()
+        lua.execute(
+            """
+            local local_player = {}
+            local visible_player = {
+                account_id = function() return "rafael-account" end,
+                name = function() return "RafaelCuPreto" end,
+                is_human_controlled = function() return true end,
+            }
+            Managers = {
+                player = {
+                    players = function()
+                        return { visible_player, local_player }
+                    end,
+                    local_player = function() return local_player end,
+                },
+                data_service = {
+                    social = {
+                        get_player_info_by_account_id = function() return nil end,
+                    },
+                },
+                state = {
+                    game_mode = {
+                        game_mode_name = function() return "hub" end,
+                    },
+                },
+            }
+            """
+        )
+
+        mod._commands["set_note"]("RafaelCuPreto", "nome", "estranho")
+
+        self.assertEqual(
+            mod._settings.player_notes["rafael-account"], "nome estranho"
+        )
+        self.assertEqual(
+            mod._settings.char_to_player["RafaelCuPreto"].puid,
+            "rafael-account",
+        )
+        self.assertIsNone(mod._settings.name_to_ids)
 
     def test_note_lookup_never_falls_back_to_a_shared_display_name(self):
         _, mod = self.make_runtime(
@@ -496,6 +649,51 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
 
         self.assertEqual(render_settings["start_layer"], 42)
         self.assertFalse(renderer["pass_open"])
+
+    def test_hud_maps_live_character_when_world_markers_are_disabled(self):
+        lua, mod = self.make_runtime({"show_world_notes": False})
+        hud_class = lua.execute(HUD_MODULE.read_text(encoding="utf-8-sig"))
+        scan_succeeded = lua.execute(
+            """
+            local Hud = ...
+            local local_player = { player_unit = {} }
+            local remote_unit = {}
+            local remote_player = {
+                player_unit = remote_unit,
+                account_id = function() return "visible-account" end,
+                name = function() return "VisibleZealot" end,
+                is_human_controlled = function() return true end,
+            }
+            ALIVE[remote_unit] = true
+            Managers = {
+                player = {
+                    players = function()
+                        return { remote_player, local_player }
+                    end,
+                },
+                state = {
+                    game_mode = {
+                        game_mode_name = function() return "hub" end,
+                    },
+                },
+            }
+
+            local parent = {
+                player = function() return local_player end,
+            }
+            local instance = setmetatable({}, { __index = Hud })
+            instance:init(parent, 0, 1)
+            local ok = pcall(instance._scan_players, instance)
+            return ok
+            """,
+            hud_class,
+        )
+
+        self.assertTrue(scan_succeeded)
+        self.assertEqual(
+            mod._settings.char_to_player["VisibleZealot"].puid,
+            "visible-account",
+        )
 
     def test_hud_continues_after_one_player_marker_failure(self):
         lua, mod = self.make_runtime(

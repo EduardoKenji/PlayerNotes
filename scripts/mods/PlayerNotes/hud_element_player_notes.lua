@@ -1,13 +1,14 @@
 -- hud_element_player_notes.lua
--- HUD element that scans in-session players every SCAN_INTERVAL seconds and
--- adds/removes "pn_note" world marker units for players who have a saved note.
--- The actual rendering is handled by HudElementWorldMarkers via the template.
+-- HUD element that scans in-session player identities every SCAN_INTERVAL
+-- seconds and, when enabled, adds/removes "pn_note" world marker units for
+-- players who have a saved note. The actual rendering is handled by
+-- HudElementWorldMarkers via the template.
 --
 -- Player identity chain:
 --   player:account_id()
---     → Managers.data_service.social:get_player_info_by_account_id(account_id)
---       → PlayerNotes identity service (account_id, then legacy platform ID)
---         → cached note lookup
+--     → optional Social PlayerInfo enrichment / legacy platform-ID migration
+--       → canonical account-ID fallback
+--         → cached note and character-alias lookup
 
 local mod = get_mod("PlayerNotes")
 
@@ -204,7 +205,8 @@ local function _scan_player(
     event_manager,
     alive,
     seen,
-    current_location
+    current_location,
+    markers_enabled
 )
     if player == my_player then return end
     if _safe_method(player, "is_human_controlled") == false then return end
@@ -216,38 +218,48 @@ local function _scan_player(
     if not account_id then return end
 
     local player_info = _safe_method(social, "get_player_info_by_account_id", account_id)
-    if not player_info then return end
 
     local get_player_key = _api.get_player_key
-    local puid = get_player_key and get_player_key(player_info)
+    local puid = player_info and get_player_key and get_player_key(player_info)
+    if not puid
+        and (type(account_id) == "string" or type(account_id) == "number")
+        and account_id ~= "" then
+        puid = account_id
+    end
     if not puid or puid == "" then return end
 
     local display_name
-    if _api.get_player_display_name then
+    if player_info and _api.get_player_display_name then
         display_name = _api.get_player_display_name(player_info, true, true)
-    else
+    elseif player_info then
         display_name = _safe_method(player_info, "user_display_name", true, true)
     end
 
     -- Character mappings support /set_note even before a note exists. They are
     -- bounded separately, while last-seen history is retained only for noted
     -- players so it cannot grow with every random teammate.
-    if _safe_method(player_info, "is_blocked") == false and _api.update_char then
-        local char_name = _safe_method(player, "name")
+    local char_name = _safe_method(player, "name")
+    if _safe_method(player_info, "is_blocked") ~= true and _api.update_char then
         if type(char_name) == "string" and char_name ~= "" then
-            _api.update_char(char_name, puid, display_name, "mission")
+            _api.update_char(
+                char_name,
+                puid,
+                display_name or "",
+                current_location == "Mourningstar" and "hub" or "mission"
+            )
         end
     end
 
     local get_note = _api.get_note
     local note = get_note and get_note(puid)
-    if not note then
-        _remove_marker(self, unit, event_manager)
-        return
+
+    if note and current_location and _api.update_last_seen then
+        _api.update_last_seen(puid, current_location)
     end
 
-    if current_location and _api.update_last_seen then
-        _api.update_last_seen(puid, current_location)
+    if not markers_enabled or not note then
+        _remove_marker(self, unit, event_manager)
+        return
     end
 
     seen[unit] = true
@@ -274,11 +286,6 @@ local function _scan_player(
 end
 
 HudElementPlayerNotes._scan_players = function(self)
-    if not _settings.show_world_notes then
-        self:_clear_all_markers()
-        return
-    end
-
     local in_mission = _is_in_mission()
     if in_mission == nil then return end
     if self._in_mission ~= in_mission then
@@ -286,16 +293,17 @@ HudElementPlayerNotes._scan_players = function(self)
         self._current_location = nil
     end
 
-    if in_mission and not _settings.show_world_notes_in_missions then
+    local markers_enabled = _settings.show_world_notes
+        and (not in_mission or _settings.show_world_notes_in_missions)
+    if not markers_enabled then
         self:_clear_all_markers()
-        return
     end
 
     local managers = rawget(_G, "Managers")
     local social = managers and managers.data_service and managers.data_service.social
     local player_manager = managers and managers.player
     local event_manager = managers and managers.event
-    if not social or not player_manager or not event_manager then return end
+    if not player_manager or (markers_enabled and not event_manager) then return end
 
     -- Resolve location only after game-mode state is available. If a mission
     -- resolver is still incomplete, leave it uncached and retry on the next scan.
@@ -337,7 +345,8 @@ HudElementPlayerNotes._scan_players = function(self)
             event_manager,
             alive,
             seen,
-            current_location
+            current_location,
+            markers_enabled
         )
         if not ok then player_error = player_error or error_message end
     end

@@ -38,7 +38,7 @@ Notes are stored only in the local DMF settings. PlayerNotes does not upload or 
 
 ## Upgrading from 2.8.x or 2.9.x
 
-Existing notes and caches are reused. Version 2.10.0 treats Darktide's `account_id` as the canonical player identity. When an older `platform_user_id` and its corresponding account ID are both available, the stored note and related metadata are migrated automatically.
+Existing notes and caches are reused. Version 2.10.0 treats Darktide's `account_id` as the canonical player identity. When an older `platform_user_id` and its corresponding account ID are both available, the stored note and related metadata are migrated automatically. Cross-network offline friends may temporarily hide the older platform ID; when their full `name#1234` tag has exactly one stored identity, PlayerNotes uses that unique tag once to migrate the legacy data to the visible account ID. Plain or ambiguous names are never migrated this way.
 
 Display names are never used as note identities. If two people have the same visible name, their notes remain separate.
 
@@ -84,6 +84,8 @@ Examples:
 
 Mapped player tags may contain spaces, but they must resolve to one stored identity. If the same display name maps to multiple player identities, PlayerNotes refuses the command and asks you to select the intended player in Social or Party Finder. Character-name mappings are observational heuristics: mission observations take priority over Mourningstar observations, but character names are not globally unique.
 
+When `/set_note` cannot resolve a cached name, it refreshes character mappings from the currently visible player list and retries immediately. This works even if world-note rendering is disabled or the Social service has not finished loading that player's profile.
+
 Notes are trimmed and limited to 512 Unicode characters. The inline, top-bar, and world displays use shorter previews; the hover tooltip retains the full saved note.
 
 `/pn_notes_delete_all` is intentionally non-destructive without the literal `confirm` argument. The confirmed command deletes all notes, names, character mappings, and last-seen history.
@@ -103,7 +105,7 @@ Open **F4 → Mod Options → PlayerNotes**.
 ## Identity and persistence
 
 - Canonical key: Darktide `account_id`.
-- Compatibility key: `platform_user_id`, used only when no account ID is available and migrated when both become known.
+- Compatibility key: `platform_user_id`, used only when no account ID is available and migrated when both become known or when a unique discriminated cross-network tag safely links the legacy key to the canonical account ID.
 - Display names: labels and unique command aliases only, never authoritative note keys.
 - Last-seen history: stored only for players who currently have notes.
 - Character mappings: bounded to 250 entries and batch-trimmed to 200 using recency and mission-context preference.
@@ -119,7 +121,7 @@ The 2.10.0 code keeps the 2.9.0 hot-path optimizations and adds defensive bounds
 - Scalar settings, resolved identities, rendered names, hover text, Group Finder identities, and overlay scale are cached.
 - Identity misses and platform-only fallbacks retry after a cooldown so loading-state results do not become permanent.
 - Persisted table reads are cached; writes are dirty-flagged and batched.
-- HUD scans run every two seconds and reuse marker/seen tables.
+- HUD identity and last-seen scans run every two seconds and reuse marker/seen tables; marker creation remains independently controlled by the world-note options.
 - Each player scan is isolated so one malformed player or marker request does not prevent cleanup or processing of the others.
 - Last-seen data grows with saved notes, not with every teammate ever encountered.
 - Character mappings and transient identity sets are bounded or rebuilt.
