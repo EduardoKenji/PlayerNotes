@@ -802,6 +802,119 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
 
         self.assertEqual(hovered_note, "lower-row note")
 
+    def test_party_finder_details_show_all_cached_notes_without_hover(self):
+        lua, mod = self.make_runtime(
+            {
+                "player_notes": {
+                    "preview-account": "n" * 150,
+                },
+                "show_party_finder_notes": True,
+            }
+        )
+
+        result = lua.execute(
+            """
+            Managers = {
+                data_service = {
+                    social = {
+                        get_player_info_by_account_id = function(self, account_id)
+                            return {
+                                account_id = function() return account_id end,
+                                platform_user_id = function() return nil end,
+                            }
+                        end,
+                    },
+                },
+                ui = {
+                    using_cursor_navigation = function() return true end,
+                },
+            }
+
+            local blueprint = {
+                __name = "PlayerRequestBlueprint",
+                pass_template = {},
+                init = function(parent, widget, element)
+                    widget.content.element = element
+                end,
+            }
+            local definitions = {
+                grid_blueprints = {
+                    player_request_entry = blueprint,
+                },
+            }
+            local mutate = mod._require_hooks[
+                "scripts/ui/views/group_finder_view/group_finder_view_definitions"
+            ]
+
+            -- Applying the hook twice models a DMF hot reload and must not
+            -- duplicate the injected preview passes.
+            mutate(definitions)
+            mutate(definitions)
+
+            local text_pass
+            local preview_pass_count = 0
+            for i = 1, #blueprint.pass_template do
+                local pass = blueprint.pass_template[i]
+                if pass.style_id
+                    and string.find(pass.style_id, "^pn_preview_note_") then
+                    preview_pass_count = preview_pass_count + 1
+                end
+                if pass.style_id == "pn_preview_note_text" then
+                    text_pass = pass
+                end
+            end
+
+            local widget = {
+                content = {},
+            }
+            local element = {
+                is_preview = true,
+                account_id = "preview-account",
+            }
+            local init_hook = mod._hooks["PlayerRequestBlueprint.init"]
+            init_hook(
+                blueprint.init,
+                {},
+                widget,
+                element,
+                nil,
+                nil,
+                {}
+            )
+
+            local visible_while_held = text_pass.visibility_function(
+                widget.content
+            )
+            local rendered_note = widget.content.pn_preview_note
+
+            element.is_preview = false
+            local visible_outside_details = text_pass.visibility_function(
+                widget.content
+            )
+
+            element.is_preview = true
+            mod._settings.show_party_finder_notes = false
+            mod.on_setting_changed("show_party_finder_notes")
+            local visible_when_disabled = text_pass.visibility_function(
+                widget.content
+            )
+
+            return {
+                preview_pass_count = preview_pass_count,
+                visible_while_held = visible_while_held,
+                visible_outside_details = visible_outside_details,
+                visible_when_disabled = visible_when_disabled,
+                rendered_note = rendered_note,
+            }
+            """
+        )
+
+        self.assertEqual(result["preview_pass_count"], 3)
+        self.assertTrue(result["visible_while_held"])
+        self.assertFalse(result["visible_outside_details"])
+        self.assertFalse(result["visible_when_disabled"])
+        self.assertEqual(result["rendered_note"], ("n" * 100) + "...")
+
     def test_hud_maps_live_character_when_world_markers_are_disabled(self):
         lua, mod = self.make_runtime({"show_world_notes": False})
         hud_class = lua.execute(HUD_MODULE.read_text(encoding="utf-8-sig"))

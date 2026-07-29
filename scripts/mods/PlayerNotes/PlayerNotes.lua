@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 2.10.0
+    Version: 3.0.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three complementary display mechanisms configured through F4 Mod Options:
@@ -61,6 +61,7 @@ local WORLD_NOTE_MAX_CHARACTERS = 160
 local TOP_BAR_NOTE_MAX_CHARACTERS = 96
 local MAX_LOCATION_CHARACTERS   = 160
 local MAX_TOOLTIP_HEIGHT        = 360
+local PARTY_FINDER_NOTE_MAX_CHARACTERS = 100
 local IDENTITY_MISS_RETRY_SECONDS = 1
 local OVERLAY_INIT_RETRY_SECONDS  = 5
 
@@ -306,6 +307,7 @@ local _settings = {
     show_inline                  = mod:get("show_inline") == true,
     show_top_bar                 = mod:get("show_top_bar") ~= false,
     show_tooltip                 = mod:get("show_tooltip") ~= false,
+    show_party_finder_notes      = mod:get("show_party_finder_notes") ~= false,
     show_world_notes             = mod:get("show_world_notes") ~= false,
     show_world_notes_in_missions = mod:get("show_world_notes_in_missions") == true,
     show_session_notifications   = mod:get("show_session_notifications") ~= false,
@@ -2180,6 +2182,79 @@ local function player_request_note_button_hover_change(content, style)
     ButtonPassTemplates.terminal_button_hover_change_function(content, style, "pn_note_hotspot")
 end
 
+-- The Party Finder creates preview player rows only while its Show Details
+-- action is held (Shift by default on keyboard). Resolve a row once per notes
+-- revision, then let the text pass reuse the cached preview every frame.
+local function resolve_group_finder_preview_note(account_id)
+    if not valid_player_id(account_id) then return nil end
+
+    local puid = account_id
+    local managers = rawget(_G, "Managers")
+    local social_service = managers
+        and managers.data_service
+        and managers.data_service.social
+    local player_info = social_service
+        and safe_method(
+            social_service,
+            "get_player_info_by_account_id",
+            account_id
+        )
+
+    if player_info then
+        puid = get_cached_player_key(player_info) or account_id
+        flush_persistence()
+    end
+
+    local note = get_note(puid)
+    if not note and puid ~= account_id then
+        note = get_note(account_id)
+    end
+    if not note then return nil end
+
+    -- Keep imported/manual multiline notes inside the fixed-height member
+    -- card. The text pass performs the visual wrapping after whitespace is
+    -- normalized to a single line.
+    note = note:gsub("%s+", " ")
+    return truncate_text(
+        note,
+        PARTY_FINDER_NOTE_MAX_CHARACTERS,
+        "..."
+    )
+end
+_api.resolve_group_finder_preview_note = resolve_group_finder_preview_note
+
+local function refresh_group_finder_preview_note(content)
+    local element = content
+        and (content.element or content.parent and content.parent.element)
+    if not element or not element.is_preview then return nil end
+
+    local account_id = element.account_id
+    local runtime_api = mod._api
+    if content.pn_preview_note_runtime ~= runtime_api
+        or content.pn_preview_note_revision ~= _notes_revision
+        or content.pn_preview_note_account_id ~= account_id then
+        local resolver = runtime_api
+            and runtime_api.resolve_group_finder_preview_note
+        local note = resolver and resolver(account_id) or nil
+
+        content.pn_preview_note_runtime = runtime_api
+        content.pn_preview_note_revision = _notes_revision
+        content.pn_preview_note_account_id = account_id
+        content.pn_preview_note = note
+    end
+
+    return content.pn_preview_note
+end
+
+local function player_request_preview_note_visible(content)
+    local runtime_api = mod._api
+    return runtime_api
+        and runtime_api.is_enabled
+        and runtime_api.is_enabled()
+        and _settings.show_party_finder_notes
+        and refresh_group_finder_preview_note(content) ~= nil
+end
+
 local function player_request_note_button_visible(content)
     local runtime_api = mod._api
     if not runtime_api
@@ -2236,6 +2311,56 @@ mod:hook_require("scripts/ui/views/group_finder_view/group_finder_view_definitio
 
     if not blueprint or type(pass_template) ~= "table" then
         return
+    end
+
+    if not table.find_by_key(pass_template, "style_id", "pn_preview_note_text") then
+        table.append(pass_template, {
+            {
+                pass_type = "rect",
+                style_id = "pn_preview_note_background",
+                style = {
+                    horizontal_alignment = "right",
+                    vertical_alignment = "center",
+                    offset = { -15, 0, 9 },
+                    size = { 300, 86 },
+                    color = Color.black(210, true),
+                },
+                visibility_function = player_request_preview_note_visible,
+            },
+            {
+                pass_type = "texture",
+                style_id = "pn_preview_note_frame",
+                value = "content/ui/materials/frames/frame_tile_2px",
+                style = {
+                    horizontal_alignment = "right",
+                    scale_to_material = true,
+                    vertical_alignment = "center",
+                    offset = { -15, 0, 10 },
+                    size = { 300, 86 },
+                    color = Color.terminal_frame_selected(220, true),
+                },
+                visibility_function = player_request_preview_note_visible,
+            },
+            {
+                pass_type = "text",
+                style_id = "pn_preview_note_text",
+                value_id = "pn_preview_note",
+                value = "",
+                style = {
+                    font_size = 18,
+                    font_type = "proxima_nova_bold",
+                    horizontal_alignment = "right",
+                    text_horizontal_alignment = "left",
+                    text_vertical_alignment = "center",
+                    vertical_alignment = "center",
+                    line_spacing = 0.9,
+                    text_color = Color.terminal_text_header(255, true),
+                    offset = { -27, 0, 11 },
+                    size = { 276, 74 },
+                },
+                visibility_function = player_request_preview_note_visible,
+            },
+        })
     end
 
     if not table.find_by_key(pass_template, "style_id", "pn_note_hotspot") then
@@ -2363,6 +2488,18 @@ mod:hook_require("scripts/ui/views/group_finder_view/group_finder_view_definitio
         end
     end
 
+    -- hook_require tables can outlive a DMF hot reload. Refresh the preview
+    -- pass closures so they always use the current runtime and settings cache.
+    for i = 1, #pass_template do
+        local pass = pass_template[i]
+        local style_id = type(pass) == "table" and pass.style_id
+        if style_id == "pn_preview_note_background"
+            or style_id == "pn_preview_note_frame"
+            or style_id == "pn_preview_note_text" then
+            pass.visibility_function = player_request_preview_note_visible
+        end
+    end
+
     if blueprint.init then
         mod:hook(blueprint, "init",
             function(func, parent, widget, element, callback_name, secondary_callback_name, ui_renderer, ...)
@@ -2376,7 +2513,17 @@ mod:hook_require("scripts/ui/views/group_finder_view/group_finder_view_definitio
                     ...
                 )
                 local hotspot = widget and widget.content and widget.content.pn_note_hotspot
+                local content = widget and widget.content
                 local account_id = element and element.account_id
+
+                if content and element and element.is_preview then
+                    content.pn_preview_note_runtime = nil
+                    content.pn_preview_note_revision = nil
+                    content.pn_preview_note_account_id = nil
+                    if _is_enabled and _settings.show_party_finder_notes then
+                        refresh_group_finder_preview_note(content)
+                    end
+                end
 
                 if hotspot and account_id then
                     hotspot.pressed_callback = function()
@@ -2754,7 +2901,7 @@ end
 mod.on_all_mods_loaded = function()
     flush_persistence()
     if _settings.enable_debug_echo then
-        mod:echo("[PlayerNotes] v2.10.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+        mod:echo("[PlayerNotes] v3.0.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
     end
 end
 

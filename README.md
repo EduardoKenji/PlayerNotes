@@ -1,13 +1,14 @@
-# PlayerNotes v2.10.0
+# PlayerNotes v3.0.0
 
-PlayerNotes adds private, persistent notes to players you encounter in Warhammer 40,000: Darktide. Notes can be created from the Social panel or Party Finder and shown in the roster, on hover, or above nearby players.
+PlayerNotes adds private, persistent notes to players you encounter in Warhammer 40,000: Darktide. Notes can be created from the Social panel or Party Finder and shown in the roster, Party Finder group details, on hover, or above nearby players.
 
-Version 2.10.0 is a reliability and cohesion release built on LucLeto's CPU-usage improvements and the reviewed optimizations recovered from the local 2.8.1 build.
+Version 3.0.0 adds at-a-glance notes for every saved player in a Party Finder group while Show Details is held. It retains the reliability, identity, and performance work completed for 2.10.0.
 
 ## Features
 
 - Add or edit a note from a player's Social-panel menu.
 - Select a Party Finder applicant from the note button on their request card.
+- Hold Party Finder's **Show Details** action (**Shift** by default) to display saved notes on all visible member cards without hovering each player.
 - Show a short note preview beside a Social-roster name. When inline text is disabled, a compact note icon is shown instead.
 - Show the full note in a floating hover tooltip.
 - Show a top-left hover bar. It displays last-seen information when available and otherwise displays a bounded note preview.
@@ -36,9 +37,9 @@ Notes are stored only in the local DMF settings. PlayerNotes does not upload or 
 4. Add `PlayerNotes` to `mod_load_order.txt` if your mod manager does not do so.
 5. Run `toggle_darktide_mods.bat` again after a game update when DML requests it.
 
-## Upgrading from 2.8.x or 2.9.x
+## Upgrading from 2.8.x, 2.9.x, or 2.10.x
 
-Existing notes and caches are reused. Version 2.10.0 treats Darktide's `account_id` as the canonical player identity. When an older `platform_user_id` and its corresponding account ID are both available, the stored note and related metadata are migrated automatically. Cross-network offline friends may temporarily hide the older platform ID; when their full `name#1234` tag has exactly one stored identity, PlayerNotes uses that unique tag once to migrate the legacy data to the visible account ID. Plain or ambiguous names are never migrated this way.
+Existing notes and caches are reused. Since 2.10.0, PlayerNotes treats Darktide's `account_id` as the canonical player identity. When an older `platform_user_id` and its corresponding account ID are both available, the stored note and related metadata are migrated automatically. Cross-network offline friends may temporarily hide the older platform ID; when their full `name#1234` tag has exactly one stored identity, PlayerNotes uses that unique tag once to migrate the legacy data to the visible account ID. Plain or ambiguous names are never migrated this way.
 
 Display names are never used as note identities. If two people have the same visible name, their notes remain separate.
 
@@ -58,11 +59,19 @@ As with any mod update, keeping a backup of your DMF settings before replacing t
 
 ### Party Finder
 
-1. Open Party Finder and view incoming player requests.
+To review a group before joining:
+
+1. Open Party Finder and point at a group.
+2. Hold **Show Details** (**Shift** by default).
+3. Saved notes appear together on the right side of the corresponding member cards. Notes wrap across a few lines and long notes use a bounded preview.
+
+To create or edit a note for someone requesting to join your group:
+
+1. View incoming player requests.
 2. Select the note button on an applicant's request card.
 3. Enter `/note <text>` in chat.
 
-The button is positioned to coexist with the button added by Inspect From Party Finder.
+The applicant note button is positioned to coexist with the button added by Inspect From Party Finder. The group-note display follows Darktide's configurable Show Details action, so remapped keyboard and controller bindings continue to work.
 
 ### Direct commands
 
@@ -97,6 +106,7 @@ Open **F4 → Mod Options → PlayerNotes**.
 - **Show inline note text in Social roster**: show a short text preview. When off, noted players still receive a compact icon.
 - **Show note in top-left bar**: show last-seen information or a note preview while hovering.
 - **Show floating tooltip on hover**: show the full note beside the hovered row.
+- **Show group notes in Party Finder details**: while Show Details is held, show every saved note directly on the matching group-member card.
 - **Show note above player head**: show nearby note boxes in the Mourningstar.
 - **Show 2D world notes in missions**: extend world notes into missions; off by default.
 - **Notify when noted players are present**: show one native notification after entering a map.
@@ -115,11 +125,12 @@ Deleting one note also removes that player's last-seen entry. Name and character
 
 ## Performance and reliability
 
-The 2.10.0 code keeps the 2.9.0 hot-path optimizations and adds defensive bounds:
+The 3.0.0 code retains the 2.10.0 defensive bounds and 2.9.0 hot-path optimizations:
 
 - Social names are decorated only in the Social-roster blueprint; `PlayerInfo.user_display_name` is not globally hooked.
 - Social hover uses each rendered widget's real bounds rather than imposing a fixed nominal bottom on scrolled rows.
 - Scalar settings, resolved identities, rendered names, hover text, Group Finder identities, and overlay scale are cached.
+- Party Finder group-note identities and previews are resolved when preview rows are created or saved notes change; their render passes reuse cached text.
 - Identity misses and platform-only fallbacks retry after a cooldown so loading-state results do not become permanent.
 - Persisted table reads are cached; writes are dirty-flagged and batched.
 - HUD identity and last-seen scans run every two seconds and reuse marker/seen tables; marker creation remains independently controlled by the world-note options.
@@ -154,7 +165,7 @@ Run the repository checks from its root:
 
 ```powershell
 python .\tools\test_player_notes.py
-.\tools\check_release.ps1 -ExpectedVersion 2.10.0
+.\tools\check_release.ps1 -ExpectedVersion 3.0.0
 git diff --check
 ```
 
@@ -169,7 +180,7 @@ Automated tests complement, but cannot replace, the in-game matrix in [RELEASING
 ## Credits
 
 - EduardoKenji: original mod and maintenance.
-- LucLeto: CPU-usage reduction work integrated in 2.9.0 and retained in 2.10.0.
+- LucLeto: CPU-usage reduction work integrated in 2.9.0 and retained in 3.0.0.
 
 ## License
 

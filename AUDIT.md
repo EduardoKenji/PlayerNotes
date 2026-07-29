@@ -1,4 +1,4 @@
-# PlayerNotes 2.10.0 project audit
+# PlayerNotes project audit (2.10.0 baseline, 3.0.0 follow-up)
 
 Audit date: 2026-07-29
 
@@ -113,7 +113,7 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
 ## Verification performed
 
 - Parsed every tracked Lua file with `luaparser`.
-- Executed sixteen behavior tests through Lupa:
+- Executed seventeen behavior tests through Lupa:
   - Platform-key to account-key migration across all persisted structures.
   - Unique discriminated-tag migration for offline cross-platform roster records.
   - Refusal to migrate an ambiguous discriminated tag.
@@ -130,6 +130,7 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
   - Hover detection for a rendered row below the scenegraph's nominal grid height.
   - Character mapping while world-marker rendering is disabled.
   - Continued HUD player processing and persistence after one marker request fails.
+  - Party Finder Show Details preview-note injection, hot-reload deduplication, identity lookup, truncation, details-only visibility, and option gating.
 - Validated every localization key referenced by code and option metadata.
 - Compared identity order, hook behavior, marker callback behavior, and lifecycle assumptions against the local Darktide and DMF sources.
 
@@ -137,6 +138,6 @@ Run the checks with:
 
 ```powershell
 python .\tools\test_player_notes.py
-.\tools\check_release.ps1 -ExpectedVersion 2.10.0
+.\tools\check_release.ps1 -ExpectedVersion 3.0.0
 git diff --check
 ```

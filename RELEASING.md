@@ -13,7 +13,7 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 
    ```powershell
    python .\tools\test_player_notes.py
-   .\tools\check_release.ps1 -ExpectedVersion 2.10.0
+   .\tools\check_release.ps1 -ExpectedVersion 3.0.0
    git diff --check
    ```
 
@@ -30,6 +30,9 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 - Close a selected-player profile and the Social panel; verify no tooltip remains.
 - Open Party Finder and verify an applicant can be selected with the note button.
 - Verify the PlayerNotes and Inspect From Party Finder buttons do not overlap.
+- In Party Finder browsing, point at a group and hold Show Details (Shift by default); verify all noted members display their wrapped note previews at once without individual hovering.
+- Repeat the Show Details check with no-note, one-note, and multi-note groups. Confirm member names remain readable, previews stay inside their cards, release clears the details view, and the option disables/re-enables only this display.
+- Remap Show Details or use a controller and verify the group-note display follows the configured action rather than a hard-coded Shift key.
 - Enter the Mourningstar and a mission; verify last-seen location, session notification, and world-note cleanup.
 - Load 2.8.x/2.9.x settings and verify a platform-keyed note migrates to the same player's account ID without loss.
 - Hover a noted cross-network friend while offline and verify their full `name#1234` tag still resolves the tooltip and migrates the legacy key only when unique.
@@ -54,5 +57,5 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
    - `scripts/`
 2. Install that exact archive into a clean mod directory and repeat the smoke test.
 3. Merge the reviewed release branch.
-4. Create the signed or annotated tag `v2.10.0` from the merge commit.
+4. Create the signed or annotated tag `v3.0.0` from the merge commit.
 5. Publish the same archive and release notes to GitHub Releases and Nexus Mods.

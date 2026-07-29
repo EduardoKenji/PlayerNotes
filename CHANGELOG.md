@@ -2,7 +2,20 @@
 
 All notable PlayerNotes changes are documented here.
 
-## [2.10.0] - Unreleased
+## [3.0.0] - Unreleased
+
+### Added
+
+- Added an at-a-glance Party Finder display for saved notes: hold Show Details (Shift by default) to show wrapped note previews on every matching group-member card without individual mouse hovering.
+- Added a default-on option to disable the Party Finder group-note display independently.
+- Added behavior coverage for preview-pass hot reload safety, identity-bound note resolution, note truncation, details-only visibility, and the new option.
+
+### Changed
+
+- Reused Darktide's configurable Show Details action and preview-row lifecycle, preserving remapped keyboard and controller input.
+- Cached each Party Finder preview note by account identity and notes revision so normal frame rendering does not repeat social-service identity work.
+
+## [2.10.0] - 2026-07-29
 
 ### Added
 
