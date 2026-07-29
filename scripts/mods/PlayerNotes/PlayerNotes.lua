@@ -50,8 +50,6 @@ local _PN_HUD_ELEMENT_PATH  = "PlayerNotes/scripts/mods/PlayerNotes/hud_element_
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local STR_BTN_ADD    = mod:localize("btn_add_note")
-local STR_SELECTED   = mod:localize("echo_selected")
-local STR_SAVED      = mod:localize("echo_saved")
 local STR_NONE_SEL   = mod:localize("echo_none_selected")
 local STR_USAGE_NOTE = mod:localize("echo_usage_note")
 
@@ -1552,7 +1550,7 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "init", function(self, ...)
         if mod._editing_puid then
             save_player_name(mod._editing_puid, mod._editing_name)
         end
-        mod:echo(string.format(STR_SELECTED, mod._editing_name or "player"))
+        mod:echo(mod:localize("echo_selected", mod._editing_name or "player"))
     end
 end)
 
@@ -1984,7 +1982,7 @@ local function select_group_finder_player(account_id)
     mod._editing_puid = puid
     mod._editing_name = display_name
     save_player_name(puid, display_name)
-    mod:echo(string.format(STR_SELECTED, display_name))
+    mod:echo(mod:localize("echo_selected", display_name))
 end
 _api.select_group_finder_player = select_group_finder_player
 
@@ -2162,7 +2160,7 @@ mod:command("note", "Save a note for the last selected player through the 'Socia
     if not mod._editing_puid then mod:echo(STR_NONE_SEL); return end
     local text = table.concat(args, " ")
     local _, was_truncated = save_note(mod._editing_puid, text, mod._editing_name)
-    mod:echo(string.format(STR_SAVED, mod._editing_name or "player"))
+    mod:echo(mod:localize("echo_saved", mod._editing_name or "player"))
     if was_truncated then
         mod:echo(string.format(
             "[PlayerNotes] Note was limited to %d characters.",

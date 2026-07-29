@@ -23,6 +23,7 @@ All notable PlayerNotes changes are documented here.
 
 ### Fixed
 
+- Fixed startup localization errors by passing `%s` replacements through DMF's localization API instead of caching incomplete format templates.
 - Restored the base UI's shared render layer and closed the PlayerNotes pass after protected overlay failures.
 - Isolated HUD scans per player so one malformed player or marker request cannot prevent other players from being processed or stale markers from being cleaned.
 - Guarded loading-sensitive player, social-service, event-manager, popup, marker, mission, and lifecycle paths.

@@ -47,7 +47,7 @@ function mod:echo(message)
     self._echoes[#self._echoes + 1] = tostring(message)
 end
 
-function mod:localize(key)
+function mod:localize(key, ...)
     local values = {
         btn_add_note = "Add Note",
         echo_selected = "Selected %s — type /note [text] to save.",
@@ -55,7 +55,7 @@ function mod:localize(key)
         echo_none_selected = "Click Add Note or Edit Note on a player first.",
         echo_usage_note = "Usage: /note [your note text]",
     }
-    return values[key] or key
+    return string.format(values[key] or key, ...)
 end
 
 function mod:command(name, description, command)
@@ -452,6 +452,7 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
         mod._editing_name = "Space Marine"
         mod._commands["note"]("x" * 600)
         self.assertEqual(len(mod._settings.player_notes["account"]), 512)
+        self.assertEqual(mod._echoes[1], "Note saved for Space Marine.")
 
         mod._editing_puid = "account"
         mod._editing_name = "Space Marine"
