@@ -111,6 +111,65 @@ local function utf8_codepoint_width(text, position)
     return width
 end
 
+local function utf8_codepoint_at(text, position)
+    local width = utf8_codepoint_width(text, position)
+    local first = string.byte(text, position)
+    if not first then return nil, 0 end
+    if width == 1 then return first, 1 end
+
+    local second = string.byte(text, position + 1)
+    if width == 2 then
+        return (first - 192) * 64 + (second - 128), width
+    end
+
+    local third = string.byte(text, position + 2)
+    if width == 3 then
+        return (first - 224) * 4096
+            + (second - 128) * 64
+            + (third - 128),
+            width
+    end
+
+    local fourth = string.byte(text, position + 3)
+    return (first - 240) * 262144
+        + (second - 128) * 4096
+        + (third - 128) * 64
+        + (fourth - 128),
+        width
+end
+
+-- PlayerInfo/user-display strings can contain Darktide private-use glyphs for
+-- platform and favorite icons. Those glyphs are presentation, not part of the
+-- player tag users type into chat commands, so remove them before persistence
+-- or identity comparison.
+local function normalize_player_display_name(value)
+    if type(value) ~= "string" or value == "" then return nil end
+
+    value = value:gsub("{#color%(%d+,%d+,%d+,%d+%)}", "")
+    value = value:gsub("{#color%(%d+,%d+,%d+%)}", "")
+    value = value:gsub("{#reset%(%)}", "")
+
+    local parts = {}
+    local position = 1
+    while position <= #value do
+        local codepoint, width = utf8_codepoint_at(value, position)
+        if not codepoint then break end
+        if codepoint < 0xE000 or codepoint > 0xF8FF then
+            parts[#parts + 1] = string.sub(
+                value,
+                position,
+                position + width - 1
+            )
+        end
+        position = position + width
+    end
+
+    value = table.concat(parts)
+    value = value:gsub("[%c]", " ")
+    value = value:match("^%s*(.-)%s*$")
+    return value ~= "" and value or nil
+end
+
 local function text_length(text)
     if type(text) ~= "string" then return 0 end
 
@@ -276,23 +335,38 @@ for player_id, note in pairs(_notes_cache) do
 end
 
 for player_id, display_name in pairs(_names_cache) do
-    if not valid_player_id(player_id)
-        or type(display_name) ~= "string"
-        or display_name == "" then
+    local normalized_name = normalize_player_display_name(display_name)
+    if not valid_player_id(player_id) or not normalized_name then
         _names_cache[player_id] = nil
+        _names_dirty = true
+    elseif normalized_name ~= display_name then
+        _names_cache[player_id] = normalized_name
         _names_dirty = true
     end
 end
 
+local normalized_name_to_ids = {}
 for display_name, id_list in pairs(_name_to_ids_cache) do
-    if type(display_name) ~= "string"
-        or display_name == ""
-        or type(id_list) ~= "table" then
-        _name_to_ids_cache[display_name] = nil
+    local normalized_name = normalize_player_display_name(display_name)
+    if not normalized_name or type(id_list) ~= "table" then
         _name_to_ids_dirty = true
     else
-        local normalized_ids = {}
+        if normalized_name ~= display_name then
+            _name_to_ids_dirty = true
+        end
+
+        local normalized_ids = normalized_name_to_ids[normalized_name]
+        if normalized_ids then
+            _name_to_ids_dirty = true
+        else
+            normalized_ids = {}
+            normalized_name_to_ids[normalized_name] = normalized_ids
+        end
+
         local seen_ids = {}
+        for _, player_id in ipairs(normalized_ids) do
+            seen_ids[player_id] = true
+        end
         local stored_entry_count = 0
         for key in pairs(id_list) do
             stored_entry_count = stored_entry_count + 1
@@ -311,15 +385,14 @@ for display_name, id_list in pairs(_name_to_ids_cache) do
             end
         end
         if #normalized_ids == 0 then
-            _name_to_ids_cache[display_name] = nil
+            normalized_name_to_ids[normalized_name] = nil
             _name_to_ids_dirty = true
-        elseif #normalized_ids ~= #id_list
-            or #normalized_ids ~= stored_entry_count then
-            _name_to_ids_cache[display_name] = normalized_ids
+        elseif stored_entry_count ~= #id_list then
             _name_to_ids_dirty = true
         end
     end
 end
+_name_to_ids_cache = normalized_name_to_ids
 
 for char_name, entry in pairs(_char_to_player_cache) do
     if type(char_name) ~= "string"
@@ -329,8 +402,10 @@ for char_name, entry in pairs(_char_to_player_cache) do
         _char_to_player_cache[char_name] = nil
         _char_to_player_dirty = true
     else
-        if type(entry.display_name) ~= "string" then
-            entry.display_name = ""
+        local normalized_name =
+            normalize_player_display_name(entry.display_name) or ""
+        if entry.display_name ~= normalized_name then
+            entry.display_name = normalized_name
             _char_to_player_dirty = true
         end
         local timestamp = tonumber(entry.last_seen)
@@ -414,9 +489,8 @@ local function get_notes()       return _notes_cache end
 local function get_name_to_ids() return _name_to_ids_cache end
 
 local function update_name_to_ids(display_name, puid)
-    if type(display_name) ~= "string"
-        or display_name == ""
-        or not valid_player_id(puid) then
+    display_name = normalize_player_display_name(display_name)
+    if not display_name or not valid_player_id(puid) then
         return false
     end
     local id_list = _name_to_ids_cache[display_name]
@@ -480,7 +554,7 @@ end
 
 local function get_player_display_name(player_info, use_stale, no_platform_icon)
     local name = safe_method(player_info, "user_display_name", use_stale, no_platform_icon)
-    return type(name) == "string" and name ~= "" and name or nil
+    return normalize_player_display_name(name)
 end
 
 local function notify_noted_players_in_session()
@@ -739,11 +813,8 @@ _api.get_player_key = get_cached_player_key
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local function save_player_name(key, name)
-    if not valid_player_id(key)
-        or type(name) ~= "string"
-        or name == "" then
-        return
-    end
+    name = normalize_player_display_name(name)
+    if not valid_player_id(key) or not name then return end
     if _names_cache[key] == name then return end
     _names_cache[key] = name
     _stored_player_ids[key] = true
@@ -759,9 +830,26 @@ end
 
 -- Get all IDs associated with a display name
 local function get_ids_for_name(display_name)
-    if not display_name or display_name == "" then return nil end
-    local ids = get_name_to_ids()[display_name]
-    return type(ids) == "table" and ids or nil
+    display_name = normalize_player_display_name(display_name)
+    if not display_name then return nil end
+
+    local normalized_query = string.lower(display_name)
+    local matching_ids = {}
+    local seen_ids = {}
+    for stored_name, stored_ids in pairs(get_name_to_ids()) do
+        local normalized_stored = normalize_player_display_name(stored_name)
+        if normalized_stored
+            and string.lower(normalized_stored) == normalized_query
+            and type(stored_ids) == "table" then
+            for _, player_id in ipairs(stored_ids) do
+                if valid_player_id(player_id) and not seen_ids[player_id] then
+                    seen_ids[player_id] = true
+                    matching_ids[#matching_ids + 1] = player_id
+                end
+            end
+        end
+    end
+    return #matching_ids > 0 and matching_ids or nil
 end
 
 -- Fatshark-style cross-network tags include a numeric discriminator. They are
@@ -769,8 +857,8 @@ end
 -- record exposes account_id but an older note was saved under platform_user_id.
 -- Plain display/character names are deliberately excluded: they are not unique.
 local function get_unique_discriminated_tag_id(display_name)
-    if type(display_name) ~= "string"
-        or not string.find(display_name, "#%d+$") then
+    display_name = normalize_player_display_name(display_name)
+    if not display_name or not string.find(display_name, "#%d+$") then
         return nil
     end
 
@@ -865,7 +953,7 @@ end
 local function update_char_to_player(char_name, puid, display_name, context)
     if type(char_name) ~= "string" or char_name == "" then return end
     if not valid_player_id(puid) then return end
-    display_name = type(display_name) == "string" and display_name or ""
+    display_name = normalize_player_display_name(display_name) or ""
     context = context == "mission" and "mission" or "hub"
 
     local known_ids = _known_chars[char_name]
@@ -965,6 +1053,9 @@ local function refresh_live_player_mappings()
                     and get_player_display_name(player_info, true, true)
                     or get_cached_name(puid)
                     or ""
+                if player_info and display_name ~= "" then
+                    reconcile_discriminated_tag_identity(display_name, puid)
+                end
                 update_char_to_player(
                     char_name,
                     puid,
@@ -1114,24 +1205,46 @@ end
 local function resolve_identifier(identifier)
     if not identifier or identifier == "" then return nil, nil, nil end
 
-    -- 1. Platform display name (name_to_ids map — populated whenever a noted player is seen)
-    local ids = get_ids_for_name(identifier)
-    if ids and #ids > 0 then
-        local unique_ids = {}
-        local resolved_id
-        local count = 0
+    -- 1. Platform display name from persisted note aliases and bounded live
+    -- character observations. Merge both sources before resolving so a
+    -- duplicate visible tag is reported as ambiguous rather than picking one.
+    local normalized_identifier = normalize_player_display_name(identifier)
+    local unique_ids = {}
+    local resolved_id
+    local count = 0
+    local function add_candidate(player_id)
+        if valid_player_id(player_id) and not unique_ids[player_id] then
+            unique_ids[player_id] = true
+            resolved_id = player_id
+            count = count + 1
+        end
+    end
+
+    local ids = get_ids_for_name(normalized_identifier)
+    if ids then
         for _, id in ipairs(ids) do
-            if id ~= nil and id ~= "" and not unique_ids[id] then
-                unique_ids[id] = true
-                resolved_id = id
-                count = count + 1
+            add_candidate(id)
+        end
+    end
+
+    if normalized_identifier then
+        local normalized_query = string.lower(normalized_identifier)
+        for _, entry in pairs(get_char_to_player()) do
+            if type(entry) == "table" then
+                local observed_name =
+                    normalize_player_display_name(entry.display_name)
+                if observed_name
+                    and string.lower(observed_name) == normalized_query then
+                    add_candidate(entry.puid)
+                end
             end
         end
-        if count == 1 then
-            return resolved_id, identifier, "tag"
-        elseif count > 1 then
-            return nil, identifier, "ambiguous"
-        end
+    end
+
+    if count == 1 then
+        return resolved_id, normalized_identifier or identifier, "tag"
+    elseif count > 1 then
+        return nil, normalized_identifier or identifier, "ambiguous"
     end
 
     -- 2. Character name (char_to_player map — populated from social roster + mission scans)
@@ -1748,11 +1861,11 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "_draw_widgets",
         local gy = world_position[2] or 0
         local grid_size = grid_node.size
         local grid_w = grid_size and grid_size[1] or 1030
-        local grid_h = grid_size and grid_size[2] or 680
 
-        -- Most frames have the cursor outside the roster; avoid walking every
-        -- friend row in that common case.
-        if mx < gx or mx > gx + grid_w or my < gy or my > gy + grid_h then
+        -- Keep cheap horizontal/top rejection, but do not reject against the
+        -- scenegraph's nominal bottom. Scrolled roster widgets can render below
+        -- that height; each widget's actual offset/size is authoritative.
+        if mx < gx or mx > gx + grid_w or my < gy then
             clear_hover_state()
             return
         end
@@ -2498,8 +2611,12 @@ mod:command("delete_note", "<player_tag_or_character_name> | Delete the note for
         return
     end
 
-    local identifier                    = table.concat(args, " ")
+    local identifier = table.concat(args, " ")
     local puid, display_name, match_type = resolve_identifier(identifier)
+    if not puid and match_type ~= "ambiguous" then
+        refresh_live_player_mappings()
+        puid, display_name, match_type = resolve_identifier(identifier)
+    end
 
     if not puid then
         if match_type == "ambiguous" then

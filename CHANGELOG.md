@@ -23,6 +23,9 @@ All notable PlayerNotes changes are documented here.
 
 ### Fixed
 
+- Fixed Social hover detection for scrolled rows below the roster scenegraph's nominal height, including partially clipped boundary rows.
+- Normalized Darktide platform/favorite glyphs out of stored player tags so plain tags such as `Shark#7571` resolve for `/set_note` and `/delete_note`.
+- Added bounded live-tag resolution and command-time refresh for both direct note commands while preserving ambiguity rejection.
 - Restored notes for offline cross-network friends by safely migrating a single stored `name#1234` platform alias to the canonical account ID; plain and ambiguous names remain excluded.
 - Made `/set_note` refresh currently visible players on a cache miss, even when world markers are disabled or Social player information is still loading.
 - Decoupled live identity and last-seen scans from world-marker visibility settings.

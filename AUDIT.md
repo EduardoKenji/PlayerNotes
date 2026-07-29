@@ -37,7 +37,9 @@ The release-candidate changes resolve the actionable high-risk items without att
 | Medium | Memory retention | Session lookup tables retained stale PlayerInfo, roster, Group Finder, character, and identity-index state longer than needed. | Weak-key caches, view/game/HUD cleanup, cooldown-based miss retries, and identity-index rebuilds bound transient retention. |
 | Medium | UI allocation/size | Imported or manually edited notes had no bound and could create oversized strings and widgets. | Notes are trimmed and capped at 512 Unicode characters; inline, top-bar, world, and tooltip geometry are independently bounded. |
 | Medium | Character mapping | A Mourningstar observation cached in the session could prevent a later mission observation from taking priority. | Session deduplication now tracks context and permits the mission upgrade. |
-| Medium | Command discovery | `/set_note` depended on a periodic world-marker scan and a fully populated Social record, so a currently visible player could remain unknown. | Unresolved commands synchronously refresh bounded character aliases from live players using canonical account IDs; periodic identity scans continue even when markers are disabled. |
+| Medium | Command discovery | Direct commands depended on periodic world-marker scans and fully populated Social records, so a currently visible player could remain unknown. | Unresolved set/delete commands synchronously refresh bounded character and display-tag aliases from live players using canonical account IDs; periodic identity scans continue even when markers are disabled. |
+| Medium | Tag normalization | Darktide platform/favorite glyphs leaked into cached display tags, so the visually plain tag typed in chat did not compare equal. | Private-use presentation glyphs and known color wrappers are stripped before tag persistence, migration, or comparison; bounded live observations provide direct tag candidates. |
+| Medium | Social hover geometry | A nominal scenegraph-height rejection cut off the lower half of a boundary row and every visible scrolled row below it. | The invalid bottom rejection was removed; actual rendered widget offsets and sizes now determine hover hits. |
 | Medium | World markers | Marker bookkeeping and payload handling could retain stale note state or couple requests. | Payloads are independent; changed/deleted/departed players are removed; buffers clear on destroy. |
 | Medium | Disable/unload | Blueprint mutations survive module disable, so added roster/Party Finder behavior could remain visible without an explicit state gate. | Runtime visibility and decoration honor the enabled state; transient state flushes and clears on disable/unload. |
 | Medium | Destructive command | `/pn_notes_delete_all` deleted all user data immediately. | Literal `/pn_notes_delete_all confirm` is required. |
@@ -111,18 +113,21 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
 ## Verification performed
 
 - Parsed every tracked Lua file with `luaparser`.
-- Executed thirteen behavior tests through Lupa:
+- Executed sixteen behavior tests through Lupa:
   - Platform-key to account-key migration across all persisted structures.
   - Unique discriminated-tag migration for offline cross-platform roster records.
   - Refusal to migrate an ambiguous discriminated tag.
+  - Normalization and migration of persisted tags containing Darktide private-use glyphs.
   - Loading-state platform fallback upgrading to account identity after its cooldown.
   - Malformed persisted entry normalization and pruning.
   - No display-name note fallback.
   - Command-time discovery of a visible player without Social-service data.
+  - Plain live-tag set/delete resolution when PlayerInfo includes platform/favorite glyphs.
   - Note size bound and last-seen deletion.
   - Destructive-command confirmation.
   - Session-notification local-player exclusion and bot handling.
   - Overlay layer/pass cleanup after an injected widget-draw failure.
+  - Hover detection for a rendered row below the scenegraph's nominal grid height.
   - Character mapping while world-marker rendering is disabled.
   - Continued HUD player processing and persistence after one marker request fails.
 - Validated every localization key referenced by code and option metadata.

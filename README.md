@@ -82,9 +82,9 @@ Examples:
 /delete_note Potty#1031
 ```
 
-Mapped player tags may contain spaces, but they must resolve to one stored identity. If the same display name maps to multiple player identities, PlayerNotes refuses the command and asks you to select the intended player in Social or Party Finder. Character-name mappings are observational heuristics: mission observations take priority over Mourningstar observations, but character names are not globally unique.
+Mapped player tags may contain spaces, but they must resolve to one stored identity. Darktide's visual platform and favorite glyphs are removed before a tag is stored or compared, so chat commands use the plain form such as `Shark#7571`. If the same display name maps to multiple player identities, PlayerNotes refuses the command and asks you to select the intended player in Social or Party Finder. Character-name mappings are observational heuristics: mission observations take priority over Mourningstar observations, but character names are not globally unique.
 
-When `/set_note` cannot resolve a cached name, it refreshes character mappings from the currently visible player list and retries immediately. This works even if world-note rendering is disabled or the Social service has not finished loading that player's profile.
+When `/set_note` or `/delete_note` cannot resolve a cached name, it refreshes character and account-tag mappings from the currently visible player list and retries immediately. This works even if world-note rendering is disabled or the Social service has not finished loading that player's profile.
 
 Notes are trimmed and limited to 512 Unicode characters. The inline, top-bar, and world displays use shorter previews; the hover tooltip retains the full saved note.
 
@@ -118,6 +118,7 @@ Deleting one note also removes that player's last-seen entry. Name and character
 The 2.10.0 code keeps the 2.9.0 hot-path optimizations and adds defensive bounds:
 
 - Social names are decorated only in the Social-roster blueprint; `PlayerInfo.user_display_name` is not globally hooked.
+- Social hover uses each rendered widget's real bounds rather than imposing a fixed nominal bottom on scrolled rows.
 - Scalar settings, resolved identities, rendered names, hover text, Group Finder identities, and overlay scale are cached.
 - Identity misses and platform-only fallbacks retry after a cooldown so loading-state results do not become permanent.
 - Persisted table reads are cached; writes are dirty-flagged and batched.

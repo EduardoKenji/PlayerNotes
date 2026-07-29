@@ -386,6 +386,39 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
         self.assertEqual(mod._settings.player_notes["platform-a"], "private note")
         self.assertIsNone(mod._settings.player_notes["account-new"])
 
+    def test_decorated_persisted_tags_are_normalized(self):
+        decorated_tag = "\ue06f adonisdeath#5888\ue046"
+        _, mod = self.make_runtime(
+            {
+                "player_notes": {"adonis-account": "helpful"},
+                "player_names": {"adonis-account": decorated_tag},
+                "name_to_ids": {decorated_tag: ["adonis-account"]},
+                "char_to_player": {
+                    "Ophelia": {
+                        "puid": "adonis-account",
+                        "display_name": decorated_tag,
+                        "last_seen": 20,
+                        "context": "hub",
+                    }
+                },
+            }
+        )
+        mod._api.flush()
+
+        self.assertEqual(
+            mod._settings.player_names["adonis-account"],
+            "adonisdeath#5888",
+        )
+        self.assertIsNone(mod._settings.name_to_ids[decorated_tag])
+        self.assertEqual(
+            mod._settings.name_to_ids["adonisdeath#5888"][1],
+            "adonis-account",
+        )
+        self.assertEqual(
+            mod._settings.char_to_player["Ophelia"].display_name,
+            "adonisdeath#5888",
+        )
+
     def test_set_note_refreshes_visible_player_without_social_info(self):
         lua, mod = self.make_runtime()
         lua.execute(
@@ -427,6 +460,74 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
             "rafael-account",
         )
         self.assertIsNone(mod._settings.name_to_ids)
+
+    def test_plain_live_tags_resolve_despite_platform_glyphs(self):
+        lua, mod = self.make_runtime()
+        lua.execute(
+            r"""
+            local local_player = {}
+            local ophelia = {
+                account_id = function() return "adonis-account" end,
+                name = function() return "Ophelia" end,
+                is_human_controlled = function() return true end,
+            }
+            local shark = {
+                account_id = function() return "shark-account" end,
+                name = function() return "Shark" end,
+                is_human_controlled = function() return true end,
+            }
+            local display_names = {
+                ["adonis-account"] = "\238\129\175 adonisdeath#5888\238\129\134",
+                ["shark-account"] = "\238\129\175 Shark#7571",
+            }
+            Managers = {
+                player = {
+                    players = function()
+                        return { ophelia, shark, local_player }
+                    end,
+                    local_player = function() return local_player end,
+                },
+                data_service = {
+                    social = {
+                        get_player_info_by_account_id = function(self, account_id)
+                            return {
+                                account_id = function() return account_id end,
+                                platform_user_id = function() return "" end,
+                                user_display_name = function()
+                                    return display_names[account_id]
+                                end,
+                                is_blocked = function() return false end,
+                            }
+                        end,
+                    },
+                },
+                state = {
+                    game_mode = {
+                        game_mode_name = function() return "hub" end,
+                    },
+                },
+            }
+            """
+        )
+
+        mod._commands["set_note"]("Ophelia", "helpful")
+        self.assertEqual(mod._settings.player_notes["adonis-account"], "helpful")
+        self.assertEqual(
+            mod._settings.name_to_ids["adonisdeath#5888"][1],
+            "adonis-account",
+        )
+
+        mod._commands["delete_note"]("adonisdeath#5888")
+        self.assertIsNone(mod._settings.player_notes)
+
+        mod._commands["set_note"]("Shark#7571", "sharp", "shooter")
+        self.assertEqual(
+            mod._settings.player_notes["shark-account"], "sharp shooter"
+        )
+        self.assertEqual(
+            mod._settings.char_to_player["Shark"].display_name,
+            "Shark#7571",
+        )
 
     def test_note_lookup_never_falls_back_to_a_shared_display_name(self):
         _, mod = self.make_runtime(
@@ -649,6 +750,57 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
 
         self.assertEqual(render_settings["start_layer"], 42)
         self.assertFalse(renderer["pass_open"])
+
+    def test_social_hover_checks_widgets_below_nominal_grid_height(self):
+        lua, mod = self.make_runtime(
+            {"player_notes": {"lower-account": "lower-row note"}}
+        )
+        player_info = lua.execute(
+            """
+            return {
+                account_id = function() return "lower-account" end,
+                platform_user_id = function() return nil end,
+            }
+            """
+        )
+        mod._api.get_player_key(player_info)
+        hover_hook = mod._safe_hooks["SocialMenuRosterView._draw_widgets"]
+
+        hovered_note = lua.execute(
+            """
+            local hook, player_info = ...
+            local view = {
+                _ui_scenegraph = {
+                    roster_grid_content = {
+                        world_position = { 0, 0 },
+                        size = { 1000, 100 },
+                    },
+                },
+                _roster_widgets = {
+                    {
+                        offset = { 0, 120 },
+                        content = {
+                            size = { 480, 80 },
+                            player_info = player_info,
+                            account_name = "Lower#1234",
+                            is_own_player = false,
+                        },
+                    },
+                },
+            }
+            local input = {
+                get = function(self, action)
+                    if action == "cursor" then return { 10, 150 } end
+                end,
+            }
+            hook(view, 0.016, 10, input, {}, {})
+            return mod._hovered_note
+            """,
+            hover_hook,
+            player_info,
+        )
+
+        self.assertEqual(hovered_note, "lower-row note")
 
     def test_hud_maps_live_character_when_world_markers_are_disabled(self):
         lua, mod = self.make_runtime({"show_world_notes": False})
