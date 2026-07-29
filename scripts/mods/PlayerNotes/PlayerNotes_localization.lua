@@ -3,7 +3,7 @@ return {
         en = "PlayerNotes",
     },
     mod_description = {
-        en = "Add persistent notes to any player in the Social panel or Party Finder. Hover a player to see their note.",
+        en = "Add persistent notes to players and see them in Social, Party Finder, and the game world.",
     },
 
     -- Social popup buttons
@@ -43,6 +43,13 @@ return {
     },
     opt_show_tooltip_title_description = {
         en = "Shows the full note in a floating tooltip next to the hovered player row.",
+    },
+
+    opt_show_party_finder_notes_title = {
+        en = "Show group notes in Party Finder details",
+    },
+    opt_show_party_finder_notes_title_description = {
+        en = "While holding Show Details (Shift by default), shows every saved player note directly on that group's member cards.",
     },
 
     opt_show_world_notes_title = {
