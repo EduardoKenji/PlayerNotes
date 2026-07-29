@@ -177,6 +177,17 @@ python -m pip install lupa luaparser
 
 Automated tests complement, but cannot replace, the in-game matrix in [RELEASING.md](RELEASING.md).
 
+### Synchronizing the active mod
+
+The repository and Darktide's active `mods\PlayerNotes` directory are separate working trees; Git commits do not synchronize them automatically. From the canonical repository root, deploy and verify every tracked file with:
+
+```powershell
+.\tools\sync_active_mod.ps1
+.\tools\sync_active_mod.ps1 -Check
+```
+
+The default destination matches this repository's development layout. Pass `-Destination <path-to-mods\PlayerNotes>` when using another layout. The command never modifies `.git`, ignores Python bytecode caches, and fails if tracked files differ or unexpected payload files require review.
+
 ## Credits
 
 - EduardoKenji: original mod and maintenance.

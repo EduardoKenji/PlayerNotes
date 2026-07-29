@@ -20,6 +20,12 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 3. Review the complete branch diff and `AUDIT.md`.
 4. Confirm all behavior tests run rather than skip. Install development dependencies with `python -m pip install lupa luaparser` when needed.
 5. If a Lua compiler is available, also run `luac -p` for every tracked `.lua` file.
+6. Synchronize and verify the active development installation:
+
+   ```powershell
+   .\tools\sync_active_mod.ps1
+   .\tools\sync_active_mod.ps1 -Check
+   ```
 
 ## In-game smoke test
 

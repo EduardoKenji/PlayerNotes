@@ -9,6 +9,7 @@ All notable PlayerNotes changes are documented here.
 - Added an at-a-glance Party Finder display for saved notes: hold Show Details (Shift by default) to show wrapped note previews on every matching group-member card without individual mouse hovering.
 - Added a default-on option to disable the Party Finder group-note display independently.
 - Added behavior coverage for preview-pass hot reload safety, identity-bound note resolution, note truncation, details-only visibility, and the new option.
+- Added a tracked-file synchronization command that deploys and hash-verifies the canonical repository against the active Darktide mod directory.
 
 ### Changed
 
