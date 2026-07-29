@@ -14,6 +14,10 @@ local mod = get_mod("PlayerNotes")
 local HudElementPlayerNotes = class("HudElementPlayerNotes")
 
 local SCAN_INTERVAL = 2.0   -- seconds between full player scans
+local _settings = mod._settings or {
+    show_world_notes = mod:get("show_world_notes") ~= false,
+    show_world_notes_in_missions = mod:get("show_world_notes_in_missions") == true,
+}
 local _mission_templates
 local _danger_utility
 
@@ -138,7 +142,7 @@ HudElementPlayerNotes.update = function(self, dt, t)
 end
 
 HudElementPlayerNotes._scan_players = function(self)
-    if not mod:get("show_world_notes") then
+    if not _settings.show_world_notes then
         self:_clear_all_markers()
         return
     end
@@ -150,7 +154,7 @@ HudElementPlayerNotes._scan_players = function(self)
         self._current_location = nil
     end
 
-    if in_mission and not mod:get("show_world_notes_in_missions") then
+    if in_mission and not _settings.show_world_notes_in_missions then
         self:_clear_all_markers()
         return
     end
@@ -182,10 +186,6 @@ HudElementPlayerNotes._scan_players = function(self)
     local alive     = ALIVE
     local seen      = self._seen_buffer
     for k in pairs(seen) do seen[k] = nil end -- Clear the buffer for the new scan
-
-    local begin_scan_updates = mod._fn_begin_player_scan_updates
-    local end_scan_updates   = mod._fn_end_player_scan_updates
-    if begin_scan_updates then begin_scan_updates() end
 
     -- Always close the persistence batch, even if a player/native call raises.
     local scan_ok, scan_error = pcall(function()
@@ -251,7 +251,9 @@ HudElementPlayerNotes._scan_players = function(self)
         end
     end)
 
-    if end_scan_updates then end_scan_updates() end
+    if mod._fn_flush_player_tracking then
+        mod._fn_flush_player_tracking()
+    end
     if not scan_ok then error(scan_error, 0) end
 
     -- Remove markers for players who have left or whose notes were deleted

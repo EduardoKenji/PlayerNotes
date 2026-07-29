@@ -21,11 +21,13 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 ## In-game smoke test
 
 - Open the Social panel and verify add/edit, inline note/icon, top bar, and tooltip behavior.
+- Verify player names outside the Social roster remain undecorated.
 - Close a selected-player profile and the Social panel; verify no tooltip remains.
 - Open Party Finder and verify an applicant can be selected with the note button.
 - Verify the PlayerNotes and Inspect From Party Finder buttons do not overlap.
 - Enter the Mourningstar and a mission; verify last-seen location, session notification, and world-note cleanup.
 - Toggle each mod option, including the debug load message, and reload the mod once.
+- If ModPerformanceMonitor is available, compare Social, Party Finder, and mission costs against 2.8.1.
 - Check the Darktide console log for PlayerNotes errors.
 
 ## Package and publish

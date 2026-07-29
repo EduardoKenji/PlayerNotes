@@ -6,7 +6,7 @@
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three simultaneous display mechanisms (each individually togglable via F4 Mod Options):
 
-    1. Inline note — hook PlayerInfo.user_display_name to append " · <note>" to the name.
+    1. Inline note — decorate the Social roster's account-name pass with " · <note>".
     2. Top-bar   — when hovering, show "Name — note" in a small bar at top-left.
     3. Tooltip   — floating box near the hovered player row, sized to fit the text.
 
@@ -104,8 +104,10 @@ end
 
 local _raw_names  = {}
 local _puid_cache = setmetatable({}, { __mode = "k" })
+local _roster_identity_ready = setmetatable({}, { __mode = "k" })
 -- Dedup guard: prevents calling mod:set for an already-persisted (char_name, puid) pair.
--- Keyed by char_name.."\0"..puid. Cleared only by pn_notes_delete_all.
+-- Nested keys avoid allocating char_name.."\0"..puid strings on repeated observations.
+-- Cleared only by pn_notes_delete_all.
 local _known_chars = {}
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -114,7 +116,7 @@ local _known_chars = {}
 -- settings — expensive in per-frame hooks. Load each table once at module init
 -- and keep a live reference. Mutate in-place; call mod:set() only when data
 -- actually changes so DMF snapshots the current state for disk persistence.
--- mod:get() / mod:set() for booleans and strings are NOT cloned — fine as-is.
+-- Scalar settings are cached separately below for hot draw/update paths.
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local _notes_cache          = mod:get("player_notes")   or {}
@@ -122,13 +124,24 @@ local _names_cache          = mod:get("player_names")   or {}
 local _name_to_ids_cache    = mod:get("name_to_ids")    or {}
 local _char_to_player_cache = mod:get("char_to_player") or {}
 local _notification_timer = 0
-
--- The HUD scan can discover several players at once. Keep its persistence
--- writes deferred until the scan finishes, while preserving immediate writes
--- for updates originating from Social or Group Finder.
-local _player_scan_batching = false
 local _char_to_player_dirty = false
-local _last_seen_dirty      = false
+local _last_seen_dirty = false
+
+-- Scalar settings are read by UI draw and HUD update paths. Cache them and
+-- refresh only the changed entry from mod.on_setting_changed.
+local _settings = {
+    show_inline                  = mod:get("show_inline") == true,
+    show_top_bar                 = mod:get("show_top_bar") ~= false,
+    show_tooltip                 = mod:get("show_tooltip") ~= false,
+    show_world_notes             = mod:get("show_world_notes") ~= false,
+    show_world_notes_in_missions = mod:get("show_world_notes_in_missions") == true,
+    show_session_notifications   = mod:get("show_session_notifications") ~= false,
+    enable_debug_echo            = mod:get("enable_debug_echo") == true,
+}
+mod._settings = _settings
+
+-- Invalidates rendered-name and hover caches when notes or inline mode change.
+local _notes_revision = 0
 
 -- Exposed so hud_element_player_notes.lua can read notes without mod:get().
 mod._fn_get_notes = function() return _notes_cache end
@@ -149,15 +162,16 @@ local function get_notes()       return _notes_cache end
 local function get_name_to_ids() return _name_to_ids_cache end
 
 local function update_name_to_ids(display_name, puid)
-    if not display_name or display_name == "" or not puid or puid == "" then return end
+    if not display_name or display_name == "" or not puid or puid == "" then return false end
     local id_list = _name_to_ids_cache[display_name] or {}
     -- Avoid duplicates
     for _, id in ipairs(id_list) do
-        if id == puid then return end
+        if id == puid then return false end
     end
     table.insert(id_list, puid)
     _name_to_ids_cache[display_name] = id_list
     mod:set("name_to_ids", _name_to_ids_cache)
+    return true
 end
 
 -- Look up note by display name, checking all associated IDs
@@ -183,44 +197,61 @@ local function save_note(puid, text, display_name)
     -- Sync to all known IDs for this name so online/offline IDs never diverge.
     -- (Xbox friends get a Fatshark UUID when offline and their Xbox XUID when online.)
     -- Uses _name_to_ids_cache directly — no mod:get() clone needed.
+    local changed = false
+    local function set_note_value(id, value)
+        if _notes_cache[id] ~= value then
+            _notes_cache[id] = value
+            changed = true
+        end
+    end
+
     local function sync_all_ids(value)
-        _notes_cache[puid] = value
+        set_note_value(puid, value)
         if display_name and display_name ~= "" then
             local id_list = _name_to_ids_cache[display_name] or {}
             for _, id in ipairs(id_list) do
-                _notes_cache[id] = value
+                set_note_value(id, value)
             end
         end
     end
 
+    local mapping_changed = false
     if text and text ~= "" then
         sync_all_ids(text)
-        update_name_to_ids(display_name, puid)
+        mapping_changed = update_name_to_ids(display_name, puid)
     else
         sync_all_ids(nil)
     end
 
-    mod:set("player_notes", _notes_cache)
+    if changed or mapping_changed then
+        _notes_revision = _notes_revision + 1
+    end
+    if changed then
+        mod:set("player_notes", _notes_cache)
+    end
 end
 
 local function notify_noted_players_in_session()
     if mod._notification_done_for_session then return end
 
-    if not mod:get("show_session_notifications") then return end
+    if not _settings.show_session_notifications then return end
 
     local players = Managers.player:players()
+    local local_player = Managers.player:local_player()
+    local social_service = Managers.data_service and Managers.data_service.social
     local notes = mod._fn_get_notes and mod._fn_get_notes() or {}
     
     local noted_list = {}
 
     for _, player in pairs(players) do
         -- SKIP the local player
-        if player ~= Managers.player:local_player() then
+        if player ~= local_player then
             local account_id = player.account_id and player:account_id()
             
             -- Only proceed if we have an account ID
             if account_id then
-                local player_info = Managers.data_service.social:get_player_info_by_account_id(account_id)
+                local player_info = social_service
+                    and social_service:get_player_info_by_account_id(account_id)
                 
                 -- Only proceed if the social service has the player's info
                 if player_info then
@@ -306,10 +337,13 @@ end
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local function get_player_key(player_info)
-    local puid = player_info:platform_user_id()
-    if puid and puid ~= "" then return puid end
-    local ok, aid = pcall(function() return player_info:account_id() end)
-    if ok and aid and aid ~= "" then return aid end
+    if not player_info then return nil end
+
+    local ok_puid, puid = pcall(function() return player_info:platform_user_id() end)
+    if ok_puid and puid and puid ~= "" then return puid end
+
+    local ok_aid, aid = pcall(function() return player_info:account_id() end)
+    if ok_aid and aid and aid ~= "" then return aid end
     return nil
 end
 
@@ -389,9 +423,8 @@ local function evict_oldest_char_entries()
     local to_remove = count - CHAR_CACHE_TRIM_TO  -- batch trim: drop to TRIM_TO, not just -1
     for i = 1, to_remove do
         local char_name = entries[i].key
-        local puid      = entries[i].entry.puid or ""
         _char_to_player_cache[char_name] = nil
-        _known_chars[char_name .. "\0" .. puid] = nil
+        _known_chars[char_name] = nil
     end
 end
 
@@ -399,14 +432,26 @@ local function update_char_to_player(char_name, puid, display_name, context)
     if not char_name or char_name == "" then return end
     if not puid or puid == "" then return end
 
-    local cache_key = char_name .. "\0" .. puid
-    if _known_chars[cache_key] then return end  -- already persisted this pair this session
+    local known_ids = _known_chars[char_name]
+    if known_ids and known_ids[puid] then return end
 
     local existing = _char_to_player_cache[char_name]
 
+    -- Avoid one redundant persistence write after each restart when the stored
+    -- mapping already represents this observation.
+    if existing and existing.puid == puid
+        and (existing.context == "mission" or existing.context == context) then
+        known_ids = known_ids or {}
+        known_ids[puid] = true
+        _known_chars[char_name] = known_ids
+        return
+    end
+
     -- Mission beats hub: never let a hub observation overwrite a mission entry.
     if existing and existing.context == "mission" and context == "hub" then
-        _known_chars[cache_key] = true  -- mark so we don't keep retrying
+        known_ids = known_ids or {}
+        known_ids[puid] = true
+        _known_chars[char_name] = known_ids
         return
     end
 
@@ -421,12 +466,10 @@ local function update_char_to_player(char_name, puid, display_name, context)
         last_seen    = os.time(),
         context      = context,
     }
-    if _player_scan_batching then
-        _char_to_player_dirty = true
-    else
-        mod:set("char_to_player", _char_to_player_cache)
-    end
-    _known_chars[cache_key] = true
+    _char_to_player_dirty = true
+    known_ids = known_ids or {}
+    known_ids[puid] = true
+    _known_chars[char_name] = known_ids
 end
 
 -- Expose so hud_element_player_notes.lua can record mission-context entries.
@@ -440,8 +483,8 @@ mod._fn_update_char = update_char_to_player
 --   Location string examples: "Mourningstar", "Vigil Station Oblivium (Havoc 40)",
 --   "Smelter Complex (Auric)", "Archives (Auric Maelstrom)".
 --
--- _session_seen: puid → true (in-memory only, not persisted)
---   Guards against repeated mod:set() calls for the same player in the same session.
+-- _session_seen: puid → last update timestamp (in-memory only, not persisted)
+--   Throttles repeated last-seen updates for the same player and location.
 --   Cleared on game-state exit so re-entering a map records a fresh timestamp.
 -- ──────────────────────────────────────────────────────────────────────────────
 
@@ -468,11 +511,7 @@ local function update_last_seen(puid, location)
     end
     
     _last_seen_cache[puid] = { ts = now, loc = location }
-    if _player_scan_batching then
-        _last_seen_dirty = true
-    else
-        mod:set("player_last_seen", _last_seen_cache)
-    end
+    _last_seen_dirty = true
     _session_seen[puid] = now 
 end
 
@@ -522,16 +561,9 @@ end
 -- Expose so hud_element_player_notes.lua can record mission-context entries.
 mod._fn_update_last_seen = update_last_seen
 
--- Batch the live-table snapshots produced by one periodic HUD player scan.
--- update_char_to_player can also be reached indirectly through the
--- user_display_name hook, so batching is scan-scoped rather than call-scoped.
-mod._fn_begin_player_scan_updates = function()
-    _player_scan_batching = true
-end
-
-mod._fn_end_player_scan_updates = function()
-    _player_scan_batching = false
-
+-- Batch persistence after a roster draw or HUD player scan. Both paths can
+-- discover several players at once.
+local function flush_player_tracking()
     if _char_to_player_dirty then
         mod:set("char_to_player", _char_to_player_cache)
         _char_to_player_dirty = false
@@ -541,6 +573,8 @@ mod._fn_end_player_scan_updates = function()
         _last_seen_dirty = false
     end
 end
+
+mod._fn_flush_player_tracking = flush_player_tracking
 
 local function get_player_for_char(char_name)
     if not char_name or char_name == "" then return nil end
@@ -580,6 +614,32 @@ mod._hovered_last_seen_text  = nil   -- formatted "Last seen in X at Y, Z ago" f
 mod._hover_tx                = nil   -- tooltip x (UI base space)
 mod._hover_ty                = nil   -- tooltip y (UI base space)
 mod._hover_dyn_h             = nil   -- tooltip height for current note
+
+local function clear_hover_state()
+    mod._last_hovered_puid      = nil
+    mod._last_hovered_key       = nil
+    mod._hover_notes_revision   = nil
+    mod._hovered_note           = nil
+    mod._hovered_raw_name       = nil
+    mod._hovered_last_seen_text = nil
+    mod._hover_tx               = nil
+    mod._hover_ty               = nil
+    mod._hover_dyn_h            = nil
+    mod._cached_top_bar_text    = ""
+end
+
+local function set_hover_text(puid, raw_name, note)
+    local last_seen_text = puid and format_last_seen_text(puid) or nil
+    local bar_text = last_seen_text or note
+
+    mod._last_hovered_puid      = puid
+    mod._hover_notes_revision   = _notes_revision
+    mod._hovered_note           = note
+    mod._hovered_raw_name       = raw_name
+    mod._hovered_last_seen_text = last_seen_text
+    mod._hover_dyn_h            = compute_tooltip_height(note)
+    mod._cached_top_bar_text    = raw_name .. "  —  " .. bar_text
+end
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- OVERLAY WIDGET DEFINITIONS
@@ -652,7 +712,7 @@ local _pn_toptext_def = UIWidget.create_definition({
 
 -- ──────────────────────────────────────────────────────────────────────────────
 -- WORLD MARKER TEMPLATE (inline — no require path needed)
--- Injected into HudElementWorldMarkers._marker_templates via Hook 9.
+-- Injected into HudElementWorldMarkers._marker_templates via Hook 10.
 --
 -- Only shown within 15 world-units (~15 m) so drift from 3D→2D projection
 -- at long range is never visible and nearby-only is less cluttered.
@@ -660,6 +720,28 @@ local _pn_toptext_def = UIWidget.create_definition({
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local _pn_world_note_size = { 280, 30 }
+
+local function set_world_note_geometry(style, width, height, offset_x, offset_y)
+    local size = style.size
+    size[1] = width
+    size[2] = height
+
+    local default_size = style.default_size
+    if default_size then
+        default_size[1] = width
+        default_size[2] = height
+    end
+
+    local offset = style.offset
+    offset[1] = offset_x
+    offset[2] = offset_y
+
+    local default_offset = style.default_offset
+    if default_offset then
+        default_offset[1] = offset_x
+        default_offset[2] = offset_y
+    end
+end
 
 local _pn_world_marker_template = {
     name              = "pn_note",
@@ -687,7 +769,6 @@ local _pn_world_marker_template = {
     create_widget_defintion = function(tmpl, scenegraph_id)
         local W   = _pn_world_note_size[1]
         local H   = _pn_world_note_size[2]
-        local PAD = 6
         return UIWidget.create_definition({
             -- Outer border (semi-transparent warm accent)
             {
@@ -732,37 +813,31 @@ local _pn_world_marker_template = {
     end,
     on_enter = function(widget, marker)
         local data = marker.data
-        widget.content.pn_note_text = (data and data.note) or ""
+        local text = (data and data.note) or ""
+        widget.content.pn_note_text = text
+
+        -- Marker text is immutable. Compute geometry once rather than resizing
+        -- and offsetting the widget every render frame.
+        local W_MAX = _pn_world_note_size[1]
+        local est_w = math.max(60, math.min(W_MAX, #text * 8 + 20))
+        local chars_per_line = math.max(1, math.floor(est_w / 8))
+        local num_lines = math.max(1, math.ceil(#text / chars_per_line))
+        local new_h = math.max(30, num_lines * 20 + 10)
+        local offset_x = -est_w * 0.5
+        local offset_y = -new_h - 30
+
+        set_world_note_geometry(
+            widget.style.pn_note_border,
+            est_w + 4,
+            new_h + 4,
+            offset_x - 2,
+            offset_y - 2
+        )
+        set_world_note_geometry(widget.style.pn_note_bg, est_w, new_h, offset_x, offset_y)
+        set_world_note_geometry(widget.style.pn_note_text, est_w, new_h, offset_x, offset_y)
     end,
     on_exit = function(widget, marker)
         -- nothing to clean up
-    end,
-    update_function = function(parent, ui_renderer, widget, marker, tmpl, dt, t)
-        local text  = widget.content.pn_note_text or ""
-        local W_MAX = _pn_world_note_size[1]   -- 280
-
-        -- Estimate rendered width (~8px per char for proxima_nova_bold @16)
-        local est_w = math.max(60, math.min(W_MAX, #text * 8 + 20))
-
-        -- Estimate height from line count (word_wrap active, ~8px per char)
-        local chars_per_line = math.max(1, math.floor(est_w / 8))
-        local num_lines      = math.max(1, math.ceil(#text / chars_per_line))
-        local new_h          = math.max(30, num_lines * 20 + 10)
-
-        -- Resize all box passes to match note content
-        widget.style.pn_note_border.size[1] = est_w + 4
-        widget.style.pn_note_border.size[2] = new_h + 4
-        widget.style.pn_note_bg.size[1]     = est_w
-        widget.style.pn_note_bg.size[2]     = new_h
-        widget.style.pn_note_text.size[1]   = est_w
-        widget.style.pn_note_text.size[2]   = new_h
-
-        -- Center box horizontally on the projected anchor (matches nameplate center)
-        widget.offset[1] = widget.offset[1] - est_w * 0.5
-
-        -- Place box above the nameplate: push up by box height + fixed gap.
-        -- Tune the 50 constant if the box clips the nameplate or floats too high.
-        widget.offset[2] = widget.offset[2] - new_h - 30
     end,
 }
 
@@ -771,16 +846,19 @@ local _pn_world_marker_template = {
 -- ──────────────────────────────────────────────────────────────────────────────
 
 local _pn_scenegraph     = nil
+local _pn_scenegraph_scale = nil
 local _pn_tooltip_widget = nil
 local _pn_toptext_widget = nil
 
 local function _ensure_overlay_ready()
     if _pn_scenegraph then return true end
     local ok, err = pcall(function()
+        local scale = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.scale or 1
         _pn_scenegraph = UIScenegraph.init_scenegraph(
             { screen = UIWorkspaceSettings.screen },
-            RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.scale or 1
+            scale
         )
+        _pn_scenegraph_scale = scale
         _pn_tooltip_widget = UIWidget.init("pn_tooltip_overlay", _pn_tooltip_def)
         _pn_toptext_widget  = UIWidget.init("pn_toptext_overlay",  _pn_toptext_def)
         _pn_tooltip_widget.alpha_multiplier = 1
@@ -789,63 +867,107 @@ local function _ensure_overlay_ready()
     if not ok then
         mod:echo("[PlayerNotes] overlay init failed: " .. tostring(err))
         _pn_scenegraph = nil
+        _pn_scenegraph_scale = nil
         return false
     end
     return true
 end
 
 -- ──────────────────────────────────────────────────────────────────────────────
--- HOOK 1: Inline note in account_name row
--- Guarded by "show_inline" mod option.
+-- HOOK 1: Roster-scoped account-name decoration
 --
--- Also caches the raw (unmodified) platform display name per puid so the
--- top-bar (Alt 2) can show "Name — note" even when inline mode is on.
--- Without this cache, w.content.account_name already contains " · note"
--- because the roster blueprint calls user_display_name() through this hook.
+-- Darktide calls PlayerInfo.user_display_name from many frequently rendered
+-- surfaces. Decorating only the Social roster's account-name passes avoids a
+-- global hot-path hook and prevents notes leaking into unrelated UI.
 -- ──────────────────────────────────────────────────────────────────────────────
 
-mod:hook(CLASS.PlayerInfo, "user_display_name",
-    function(func, self, ...)
-        local name, color_override = func(self, ...)
+local function decorate_roster_account_name(content)
+    local player_info = content and content.player_info
+    local raw_name = content and content.pn_raw_account_name
+    if not player_info or not raw_name or raw_name == "" then return end
 
-        -- Populate puid and name caches. Never call mod:set here (per-frame cost).
-        -- Cached resolution lets the hover loop avoid native player_info methods,
-        -- which can crash for offline/cross-platform players when called every frame.
-        local puid = get_cached_player_key(self)
-        if puid then
-            _raw_names[puid] = name
-        end
+    if content.pn_player_info ~= player_info then
+        content.pn_player_info = player_info
+        content.pn_note_revision = nil
+        content.pn_rendered_account_name = nil
+    end
 
-        if self:is_own_player() then return name, color_override end
+    if content.is_own_player then
+        content.account_name = raw_name
+        return
+    end
 
-        -- Track character name → player mapping (hub context).
-        -- Skip blocked players — character_name() returns a localized string for them.
-        -- _known_chars ensures mod:set is only called once per unique (char, puid) pair.
-        if puid and not self:is_blocked() then
-            local char_name = self:character_name()
-            if char_name and char_name ~= "" then
-                update_char_to_player(char_name, puid, name, "hub")
+    local puid = get_cached_player_key(player_info)
+    if puid then
+        _raw_names[puid] = raw_name
+    end
+
+    -- Resolve character identity once per PlayerInfo object. If a native method
+    -- is unavailable for an offline/cross-platform entry, skip the mapping.
+    if puid and not _roster_identity_ready[player_info] then
+        local ok_blocked, is_blocked = pcall(function() return player_info:is_blocked() end)
+        if ok_blocked and not is_blocked then
+            local ok_character, char_name = pcall(function() return player_info:character_name() end)
+            if ok_character and char_name and char_name ~= "" then
+                update_char_to_player(char_name, puid, raw_name, "hub")
             end
         end
+        _roster_identity_ready[player_info] = true
+    end
 
-        -- Try to get note using both puid and display name for ID mapping support
-        local note = nil
-        if puid then
-            note = get_note(puid, name)
+    if content.pn_note_revision == _notes_revision
+        and content.pn_cached_raw_name == raw_name
+        and content.pn_rendered_account_name then
+        content.account_name = content.pn_rendered_account_name
+        return
+    end
+
+    local note = puid and get_note(puid, raw_name) or get_note_by_name(raw_name)
+    local rendered_name = raw_name
+    if note and note ~= "" then
+        if _settings.show_inline then
+            local preview = #note > 28 and note:sub(1, 28) .. "..." or note
+            rendered_name = raw_name .. " · " .. preview
         else
-            note = get_note_by_name(name)
+            -- U+E046, Darktide's favorites icon.
+            rendered_name = raw_name .. " \xEE\x81\x86"
         end
-        
-        if not note or note == "" then return name, color_override end
+    end
 
-        if not mod:get("show_inline") then
-            -- Icon-only: show a small star glyph (U+E046, Darktide favorites icon) to
-            -- indicate this player has a note, without revealing the text.
-            return (name or "") .. " \xEE\x81\x86", color_override
+    content.pn_note_revision = _notes_revision
+    content.pn_cached_raw_name = raw_name
+    content.pn_rendered_account_name = rendered_name
+    content.account_name = rendered_name
+end
+
+mod:hook_require(
+    "scripts/ui/views/social_menu_roster_view/social_menu_roster_view_blueprints",
+    function(blueprints)
+        for _, blueprint in pairs(blueprints) do
+            local passes = type(blueprint) == "table" and blueprint.pass_template
+            if type(passes) == "table" then
+                for i = 1, #passes do
+                    local pass = passes[i]
+                    if pass.style_id == "account_name" then
+                        -- Preserve the game's real function across mod reloads.
+                        local original = pass.pn_player_notes_original_change_function
+                            or pass.change_function
+                        pass.pn_player_notes_original_change_function = original
+                        pass.change_function = function(content, style)
+                            local cached_raw_name = content.pn_raw_account_name
+                            if cached_raw_name then
+                                content.account_name = cached_raw_name
+                            end
+                            if original then
+                                original(content, style)
+                            end
+                            content.pn_raw_account_name = content.account_name
+                            decorate_roster_account_name(content)
+                        end
+                    end
+                end
+            end
         end
-
-        local preview = #note > 28 and note:sub(1, 28) .. "..." or note
-        return (name or "") .. " · " .. preview, color_override
     end
 )
 
@@ -891,6 +1013,7 @@ mod:hook(CLASS.ViewElementPlayerSocialPopup, "_set_player_info",
             mod._popup_puid = nil
         end
 
+        flush_player_tracking()
         func(self, parent, player_info, menu_items, num_menu_items, ...)
     end
 )
@@ -915,17 +1038,13 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe(CLASS.SocialMenuRosterView, "on_exit", function(self, ...)
+    flush_player_tracking()
     mod._popup_puid             = nil
     mod._editing_puid           = nil
     mod._editing_name           = nil
-    mod._hovered_note           = nil
-    mod._hovered_raw_name       = nil
-    mod._hovered_last_seen_text = nil
-    mod._hover_tx               = nil
-    mod._hover_ty               = nil
-    mod._hover_dyn_h            = nil
-    mod._last_hovered_puid      = nil
+    clear_hover_state()
     _puid_cache = setmetatable({}, { __mode = "k" })
+    _roster_identity_ready = setmetatable({}, { __mode = "k" })
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -937,12 +1056,21 @@ end)
 -- hotspot.is_hover NEVER works here — roster widgets are drawn in an offscreen
 -- render target. Geometric bounds check with world_position + widget.offset is used.
 --
--- Raw account name (w.content.account_name) is stored instead of calling
--- pi:user_display_name() to avoid getting the note-appended version from Hook 1.
+-- The scoped roster blueprint stores pn_raw_account_name so hover rendering
+-- never has to strip inline note/icon decoration.
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe(CLASS.SocialMenuRosterView, "_draw_widgets",
     function(self, dt, t, input_service, ui_renderer, render_settings)
+        -- Text passes ran immediately before this post-hook and may have
+        -- discovered several identities. Persist them in one batch.
+        flush_player_tracking()
+
+        if not next(_notes_cache) then
+            clear_hover_state()
+            return
+        end
+
         -- REMOVED: The "Reset hover state each frame" block from here.
         -- We only reset when the mouse is not hovering anyone (see bottom of function).
 
@@ -962,6 +1090,16 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "_draw_widgets",
         local my  = Vector3.y(cursor_pos) * inv
         local gx  = grid_node.world_position[1]
         local gy  = grid_node.world_position[2]
+        local grid_size = grid_node.size
+        local grid_w = grid_size and grid_size[1] or 1030
+        local grid_h = grid_size and grid_size[2] or 680
+
+        -- Most frames have the cursor outside the roster; avoid walking every
+        -- friend row in that common case.
+        if mx < gx or mx > gx + grid_w or my < gy or my > gy + grid_h then
+            clear_hover_state()
+            return
+        end
 
         local found_hover = false
 
@@ -981,39 +1119,31 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "_draw_widgets",
                     -- HEARTBEAT: Tell the renderer we are still actively hovering
                     mod._last_hover_time = t 
 
-                    local pi   = w.content and w.content.player_info
-                    local puid = pi and not w.content.is_own_player and _puid_cache[pi]
-                    
-                    -- OPTIMIZATION: Only recalculate expensive strings/notes if the hovered player has changed.
-                    if puid ~= mod._last_hovered_puid then
-                        mod._last_hovered_puid = puid
-                        
-                        local raw_name = get_cached_name(puid)
-                            or (w.content and w.content.account_name)
-                            or "Player"
-                        
+                    local content = w.content
+                    local pi = content and content.player_info
+                    local is_own_player = content and content.is_own_player
+                    local cached_puid = pi and _puid_cache[pi]
+                    local puid = cached_puid and cached_puid or nil
+                    local raw_name = get_cached_name(puid)
+                        or (content and content.pn_raw_account_name)
+                        or (content and content.account_name)
+                        or "Player"
+                    local hover_key = puid or raw_name
+
+                    if hover_key ~= mod._last_hovered_key
+                        or mod._hover_notes_revision ~= _notes_revision then
+                        mod._last_hovered_key = hover_key
                         local note = nil
-                        if puid then
-                            note = get_note(puid, raw_name)
-                        else
-                            note = get_note_by_name(raw_name)
+                        if not is_own_player then
+                            note = puid and get_note(puid, raw_name) or get_note_by_name(raw_name)
                         end
 
                         if note then
-                            local last_seen_text = puid and format_last_seen_text(puid) or nil
-                            local bar_text = last_seen_text or note
-                            mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
-
-                            -- Store visual state
-                            mod._hovered_note           = note
-                            mod._hovered_raw_name       = raw_name
-                            mod._hovered_last_seen_text = last_seen_text
-                            mod._hover_dyn_h            = compute_tooltip_height(note)
+                            set_hover_text(puid, raw_name, note)
                         else
-                            -- If they have no note, clear the visuals immediately
-                            mod._hovered_note = nil
-                            mod._hovered_raw_name = nil
-                            mod._hovered_last_seen_text = nil
+                            clear_hover_state()
+                            mod._last_hovered_key = hover_key
+                            mod._hover_notes_revision = _notes_revision
                         end
                     end
 
@@ -1036,13 +1166,7 @@ mod:hook_safe(CLASS.SocialMenuRosterView, "_draw_widgets",
 
         -- If the mouse is no longer over any player, reset ALL state.
         if not found_hover then
-            mod._last_hovered_puid      = nil
-            mod._hovered_note           = nil
-            mod._hovered_raw_name       = nil
-            mod._hovered_last_seen_text = nil
-            mod._hover_tx               = nil
-            mod._hover_ty               = nil
-            mod._hover_dyn_h            = nil
+            clear_hover_state()
         end
     end
 )
@@ -1060,25 +1184,22 @@ mod:hook_safe(CLASS.UIConstantElements, "draw", function(self, dt, t, input_serv
     -- THE WATCHDOG: If the heartbeat hasn't been updated in 0.1 seconds,
     -- it means the hover logic is gone or the mouse left. Clear everything.
     if mod._hovered_note and t - mod._last_hover_time > 0.1 then
-        mod._hovered_note           = nil
-        mod._hovered_raw_name       = nil
-        mod._hovered_last_seen_text = nil
-        mod._hover_tx               = nil
-        mod._hover_ty               = nil
-        mod._hover_dyn_h            = nil
-        mod._last_hovered_puid      = nil
-        mod._cached_top_bar_text    = ""
+        clear_hover_state()
     end
 
     local note = mod._hovered_note
     if not note then return end
+
+    local show_top_bar = _settings.show_top_bar
+    local show_tooltip = _settings.show_tooltip
+    if not show_top_bar and not show_tooltip then return end
     if not _ensure_overlay_ready() then return end
 
-    local show_top_bar = mod:get("show_top_bar")
-    local show_tooltip = mod:get("show_tooltip")
-    if not show_top_bar and not show_tooltip then return end
-
-    UIScenegraph.update_scenegraph(_pn_scenegraph, RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.scale or 1)
+    local scale = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.scale or 1
+    if scale ~= _pn_scenegraph_scale then
+        UIScenegraph.update_scenegraph(_pn_scenegraph, scale)
+        _pn_scenegraph_scale = scale
+    end
 
     local ui_renderer     = self._ui_renderer
     local render_settings = self._render_settings
@@ -1113,8 +1234,6 @@ mod:hook_safe(CLASS.UIConstantElements, "draw", function(self, dt, t, input_serv
     -- is available; falls back to "Name — <note>" for players seen before this
     -- feature was added.
     if show_top_bar then
-        local raw_name  = mod._hovered_raw_name or "Player"
-        local bar_text  = mod._hovered_last_seen_text or note
         _pn_toptext_widget.content.label_text = mod._cached_top_bar_text
         _pn_toptext_widget.offset[1]          = A2_X
         _pn_toptext_widget.offset[2]          = A2_Y
@@ -1143,50 +1262,84 @@ end)
 
 mod:hook_safe(CLASS.GroupFinderView, "_draw_widgets",
     function(self, dt, t, input_service, ui_renderer, render_settings)
-        -- Reset hover state each frame
-        mod._hovered_note           = nil
-        mod._hovered_raw_name       = nil
-        mod._hovered_last_seen_text = nil
-        mod._hover_tx               = nil
-        mod._hover_ty               = nil
-        mod._hover_dyn_h            = nil
+        if not next(_notes_cache) then
+            clear_hover_state()
+            return
+        end
 
         local grid = self._player_request_grid
-        if not grid then return end
+        if not grid then
+            clear_hover_state()
+            return
+        end
 
         -- Use the same hover API the game uses in this view (no offscreen renderer)
         local hovered_idx = grid:hovered_grid_index()
-        if not hovered_idx then return end
+        if not hovered_idx then
+            self._pn_hover_account_id = nil
+            clear_hover_state()
+            return
+        end
 
         local widget = grid:widget_by_index(hovered_idx)
-        if not widget then return end
+        if not widget then
+            clear_hover_state()
+            return
+        end
 
         local content    = widget.content
         local element    = content and content.element
         local account_id = element and element.account_id
-        if not account_id then return end
+        if not account_id then
+            clear_hover_state()
+            return
+        end
 
-        local social = Managers.data_service and Managers.data_service.social
-        if not social then return end
+        if self._pn_hover_account_id ~= account_id
+            or self._pn_hover_notes_revision ~= _notes_revision then
+            self._pn_hover_account_id = account_id
+            self._pn_hover_notes_revision = _notes_revision
+            self._pn_hover_note = nil
+            self._pn_hover_puid = nil
+            self._pn_hover_raw_name = nil
 
-        local player_info = social:get_player_info_by_account_id(account_id)
-        if not player_info then return end
+            local social = Managers.data_service and Managers.data_service.social
+            local player_info = social and social:get_player_info_by_account_id(account_id)
+            if player_info then
+                local puid = get_cached_player_key(player_info)
+                local note = puid and get_note(puid) or nil
+                if note then
+                    local raw_name = get_cached_name(puid)
+                        or player_info:user_display_name()
+                        or "Player"
+                    self._pn_hover_note = note
+                    self._pn_hover_puid = puid
+                    self._pn_hover_raw_name = raw_name
+                    set_hover_text(puid, raw_name, note)
+                else
+                    clear_hover_state()
+                end
+            else
+                clear_hover_state()
+            end
+        end
 
-        local puid = get_cached_player_key(player_info)
-        local note = get_note(puid)
+        local note = self._pn_hover_note
         if not note then return end
+        if not mod._hovered_note then
+            set_hover_text(self._pn_hover_puid, self._pn_hover_raw_name or "Player", note)
+        end
+
+        mod._last_hover_time = t
 
         local cursor_pos = input_service and input_service:get("cursor")
         if not cursor_pos then return end
 
         local inv   = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.inverse_scale or 1
-        local sw    = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.width  * inv or 1920
         local sh    = RESOLUTION_LOOKUP and RESOLUTION_LOOKUP.height * inv or 1080
         local mx    = Vector3.x(cursor_pos) * inv
         local my    = Vector3.y(cursor_pos) * inv
-        local dyn_h = compute_tooltip_height(note)
-
-        mod._last_hover_time = t
+        local dyn_h = mod._hover_dyn_h or compute_tooltip_height(note)
 
         -- Position tooltip to the left of cursor (player_request_grid is on the right)
         local tx = mx - TT_W - 20
@@ -1194,19 +1347,8 @@ mod:hook_safe(CLASS.GroupFinderView, "_draw_widgets",
         local ty = math.max(my - dyn_h / 2, 10)
         ty = math.min(ty, sh - dyn_h - 10)
 
-        local raw_name = get_cached_name(puid)
-                      or player_info:user_display_name()
-                      or "Player"
-        local last_seen_text = puid and format_last_seen_text(puid) or nil
-        local bar_text = last_seen_text or note
-        mod._cached_top_bar_text = raw_name .. "  —  " .. bar_text
-
-        mod._hovered_note           = note
-        mod._hovered_raw_name       = raw_name
-        mod._hovered_last_seen_text = last_seen_text
         mod._hover_tx               = tx
         mod._hover_ty               = ty
-        mod._hover_dyn_h            = dyn_h
     end
 )
 
@@ -1215,13 +1357,7 @@ mod:hook_safe(CLASS.GroupFinderView, "_draw_widgets",
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod:hook_safe(CLASS.GroupFinderView, "on_exit", function(self, ...)
-    mod._hovered_note           = nil
-    mod._hovered_raw_name       = nil
-    mod._hovered_last_seen_text = nil
-    mod._hover_tx               = nil
-    mod._hover_ty               = nil
-    mod._hover_dyn_h            = nil
-    mod._last_hovered_puid      = nil
+    clear_hover_state()
 end)
 
 -- ──────────────────────────────────────────────────────────────────────────────
@@ -1267,10 +1403,9 @@ local function select_group_finder_player(account_id)
         return
     end
 
-    -- user_display_name() passes through Hook 1, which caches the undecorated
-    -- name before returning any inline note/icon decoration.
-    local returned_name = player_info:user_display_name(true, true)
-    local display_name = get_cached_name(puid) or returned_name or "player"
+    local display_name = player_info:user_display_name(true, true)
+        or get_cached_name(puid)
+        or "player"
 
     mod._editing_puid = puid
     mod._editing_name = display_name
@@ -1646,14 +1781,16 @@ mod:command("pn_notes_delete_all", "Delete ALL saved PlayerNotes and reset the n
     _name_to_ids_cache    = {}
     _char_to_player_cache = {}
     _last_seen_cache      = {}
+    _char_to_player_dirty = false
+    _last_seen_dirty      = false
+    _notes_revision       = _notes_revision + 1
     -- Reset session caches
     _raw_names   = {}
     _puid_cache  = setmetatable({}, { __mode = "k" })
+    _roster_identity_ready = setmetatable({}, { __mode = "k" })
     _known_chars = {}
     _session_seen = {}
-    _player_scan_batching = false
-    _char_to_player_dirty = false
-    _last_seen_dirty      = false
+    clear_hover_state()
     mod:echo("[PlayerNotes] All notes and name cache cleared.")
 end)
 
@@ -1661,10 +1798,20 @@ end)
 -- LIFECYCLE
 -- ──────────────────────────────────────────────────────────────────────────────
 
+mod.on_setting_changed = function(setting_id)
+    if _settings[setting_id] == nil then return end
+
+    _settings[setting_id] = mod:get(setting_id) == true
+    if setting_id == "show_inline" then
+        _notes_revision = _notes_revision + 1
+    end
+end
+
 -- Clear per-session last-seen guard when leaving a game state (mission or hub).
 -- This ensures re-entering a map records a fresh timestamp.
 mod.on_game_state_changed = function(status, state_name)
     if status == "exit" then
+        flush_player_tracking()
         _session_seen = {}
         -- Reset the flag when leaving the map
         mod._notification_done_for_session = false
@@ -1675,7 +1822,7 @@ mod.on_game_state_changed = function(status, state_name)
 end
 
 mod.on_all_mods_loaded = function()
-    if mod:get("enable_debug_echo") then
+    if _settings.enable_debug_echo then
         mod:echo("[PlayerNotes] v2.9.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
     end
 end

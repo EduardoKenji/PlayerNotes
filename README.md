@@ -23,13 +23,14 @@
 
 ## Performance
 
-The 2.9.0 codebase incorporates LucLeto's CPU-usage improvements:
+The 2.9.0 codebase combines LucLeto's CPU-usage work with reviewed optimizations from the local 2.8.1 build:
 
+- Social roster names are decorated inside the roster blueprint instead of globally hooking `PlayerInfo.user_display_name`.
 - UI draw integrations use post-only safe hooks, keeping the base game's draw work out of PlayerNotes callbacks.
 - Player identity lookups, including misses, are cached for the lifetime of the relevant view.
-- Hover state avoids redundant resets and repeated last-seen formatting.
-- Character and last-seen persistence writes are batched during the two-second HUD player scan.
-- World-marker payloads are created only when a marker is added or changed, and all marker bookkeeping is cleared when a player leaves or the HUD is destroyed.
+- Scalar settings, rendered roster names, Group Finder identities, hover text, and overlay scale are recalculated only when their inputs change.
+- Character and last-seen persistence writes are batched after roster draws and the two-second HUD player scan.
+- World-marker geometry is calculated once when a marker is added; marker bookkeeping is cleared when a player leaves or the HUD is destroyed.
 - Party Finder note buttons bind when request rows are created instead of scanning every request widget every frame.
 
 ---
@@ -152,7 +153,7 @@ Navigate to **PlayerNotes** in the mod options menu to toggle:
 Tested on the current live version of Darktide. Should be compatible with most mods.
 
 **Hooks used:**
-- `PlayerInfo.user_display_name` — for inline note display
+- `social_menu_roster_view_blueprints` — scoped inline note/icon decoration
 - `ViewElementPlayerSocialPopup._set_player_info` — for right-click menu injection
 - `SocialMenuRosterView._draw_widgets` safe post-hook — for hover detection in Social panel
 - `GroupFinderView._draw_widgets` safe post-hook — for Party Finder hover tooltips
