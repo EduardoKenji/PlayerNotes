@@ -163,69 +163,79 @@ HudElementPlayerNotes._scan_players = function(self)
     local seen      = self._seen_buffer
     for k in pairs(seen) do seen[k] = nil end -- Clear the buffer for the new scan
 
-    for _, player in pairs(players) do
-        repeat
-            if player == my_player then break end
+    local begin_scan_updates = mod._fn_begin_player_scan_updates
+    local end_scan_updates   = mod._fn_end_player_scan_updates
+    if begin_scan_updates then begin_scan_updates() end
 
-            local unit = player.player_unit
-            if not unit or not alive[unit] then break end
+    -- Always close the persistence batch, even if a player/native call raises.
+    local scan_ok, scan_error = pcall(function()
+        for _, player in pairs(players) do
+            repeat
+                if player == my_player then break end
 
-            local account_id = player.account_id and player:account_id()
-            if not account_id then break end
+                local unit = player.player_unit
+                if not unit or not alive[unit] then break end
 
-            local player_info = social:get_player_info_by_account_id(account_id)
-            if not player_info then break end
+                local account_id = player.account_id and player:account_id()
+                if not account_id then break end
 
-            local puid = player_info:platform_user_id()
-            if not puid or puid == "" then break end
+                local player_info = social:get_player_info_by_account_id(account_id)
+                if not player_info then break end
 
-            -- Track character name → player mapping with "mission" context.
-            if not player_info:is_blocked() and mod._fn_update_char then
-                local char_name = player:name()
-                if char_name and char_name ~= "" then
-                    local display_name = player_info:user_display_name(true, true)
-                    mod._fn_update_char(char_name, puid, display_name, "mission")
+                local puid = player_info:platform_user_id()
+                if not puid or puid == "" then break end
+
+                -- Track character name → player mapping with "mission" context.
+                if not player_info:is_blocked() and mod._fn_update_char then
+                    local char_name = player:name()
+                    if char_name and char_name ~= "" then
+                        local display_name = player_info:user_display_name(true, true)
+                        mod._fn_update_char(char_name, puid, display_name, "mission")
+                    end
                 end
-            end
 
-            -- Record last-seen location for this player (Smart-Throttle is handled inside the function).
-            if current_location and mod._fn_update_last_seen then
-                mod._fn_update_last_seen(puid, current_location)
-            end
+                -- Record last-seen location for this player (Smart-Throttle is handled inside the function).
+                if current_location and mod._fn_update_last_seen then
+                    mod._fn_update_last_seen(puid, current_location)
+                end
 
-            local note = notes[puid]
-            if not note then
-                -- Player has no note: remove existing marker if any
+                local note = notes[puid]
+                if not note then
+                    -- Player has no note: remove existing marker if any
+                    if self._active[unit] then
+                        event_mgr:trigger("remove_world_marker", self._active[unit])
+                        self._active[unit] = nil
+                    end
+                    break
+                end
+
+                seen[unit] = true
+
+                -- If marker exists but note text changed, remove it to re-add with updated text.
                 if self._active[unit] then
+                    if self._active_notes[unit] == note then break end  -- unchanged, keep it
                     event_mgr:trigger("remove_world_marker", self._active[unit])
-                    self._active[unit] = nil
+                    self._active[unit]       = nil
+                    self._active_notes[unit] = nil
                 end
-                break
-            end
 
-            seen[unit] = true
+                -- MEMORY OPTIMIZATION: Reuse the buffer table instead of creating a new one per player per scan.
+                self._marker_data_buffer.puid = puid
+                self._marker_data_buffer.note = note
 
-            -- If marker exists but note text changed, remove it to re-add with updated text.
-            if self._active[unit] then
-                if self._active_notes[unit] == note then break end  -- unchanged, keep it
-                event_mgr:trigger("remove_world_marker", self._active[unit])
-                self._active[unit]       = nil
-                self._active_notes[unit] = nil
-            end
+                local captured_unit = unit
+                event_mgr:trigger("add_world_marker_unit", "pn_note", unit,
+                    function(marker_id)
+                        self._active[captured_unit]       = marker_id
+                        self._active_notes[captured_unit] = note
+                    end,
+                    self._marker_data_buffer)
+            until true
+        end
+    end)
 
-            -- MEMORY OPTIMIZATION: Reuse the buffer table instead of creating a new one per player per scan.
-            self._marker_data_buffer.puid = puid
-            self._marker_data_buffer.note = note
-            
-            local captured_unit = unit
-            event_mgr:trigger("add_world_marker_unit", "pn_note", unit,
-                function(marker_id)
-                    self._active[captured_unit]       = marker_id
-                    self._active_notes[captured_unit] = note
-                end,
-                self._marker_data_buffer)
-        until true
-    end
+    if end_scan_updates then end_scan_updates() end
+    if not scan_ok then error(scan_error, 0) end
 
     -- Remove markers for players who have left or whose notes were deleted
     for unit, marker_id in pairs(self._active) do
