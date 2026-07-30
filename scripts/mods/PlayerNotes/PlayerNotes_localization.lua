@@ -59,6 +59,58 @@ return {
         en = "Shows the player's note above their nameplate in the game world. Active in the Mourningstar hub; use the option below to also enable it in missions.",
     },
 
+    opt_world_note_appearance_group_title = {
+        en = "2D World Note Appearance",
+    },
+    opt_world_note_appearance_group_title_description = {
+        en = "Controls the opacity and text/accent color of notes rendered above player heads.",
+    },
+    opt_world_note_opacity_title = {
+        en = "Opacity",
+    },
+    opt_world_note_opacity_title_description = {
+        en = "Sets the overall opacity of the 2D world-note box, border, and text from 0 to 100 percent.",
+    },
+    opt_world_note_color_preset_title = {
+        en = "Color",
+    },
+    opt_world_note_color_preset_title_description = {
+        en = "Selects a color preset and updates all three RGB sliders. Moving an RGB slider selects the matching preset or Custom.",
+    },
+    opt_world_note_color_custom = {
+        en = "Custom",
+    },
+    opt_world_note_color_red = {
+        en = "Red",
+    },
+    opt_world_note_color_blue = {
+        en = "Blue",
+    },
+    opt_world_note_color_green = {
+        en = "Green",
+    },
+    opt_world_note_color_yellow = {
+        en = "Yellow",
+    },
+    opt_world_note_color_red_title = {
+        en = "Red (RGB)",
+    },
+    opt_world_note_color_red_title_description = {
+        en = "Sets the red channel from 0 to 255.",
+    },
+    opt_world_note_color_green_title = {
+        en = "Green (RGB)",
+    },
+    opt_world_note_color_green_title_description = {
+        en = "Sets the green channel from 0 to 255.",
+    },
+    opt_world_note_color_blue_title = {
+        en = "Blue (RGB)",
+    },
+    opt_world_note_color_blue_title_description = {
+        en = "Sets the blue channel from 0 to 255.",
+    },
+
     opt_experimental_group_title = {
         en = "Experimental",
     },

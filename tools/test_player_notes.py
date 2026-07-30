@@ -915,6 +915,139 @@ class PlayerNotesBehaviorTests(unittest.TestCase):
         self.assertFalse(result["visible_when_disabled"])
         self.assertEqual(result["rendered_note"], ("n" * 100) + "...")
 
+    def test_world_note_appearance_presets_and_custom_rgb_stay_coherent(self):
+        lua, mod = self.make_runtime()
+
+        self.assertEqual(mod._settings.world_note_opacity, 50)
+        self.assertEqual(mod._settings.world_note_color_preset, "yellow")
+        self.assertEqual(mod._settings.world_note_color_red, 255)
+        self.assertEqual(mod._settings.world_note_color_green, 255)
+        self.assertEqual(mod._settings.world_note_color_blue, 0)
+
+        mod._settings.world_note_color_preset = "red"
+        mod.on_setting_changed("world_note_color_preset")
+        self.assertEqual(mod._settings.world_note_color_red, 255)
+        self.assertEqual(mod._settings.world_note_color_green, 0)
+        self.assertEqual(mod._settings.world_note_color_blue, 0)
+
+        mod._settings.world_note_color_red = 12
+        mod._settings.world_note_color_green = 34
+        mod._settings.world_note_color_blue = 56
+        mod.on_setting_changed("world_note_color_blue")
+        self.assertEqual(mod._settings.world_note_color_preset, "custom")
+
+        mod._settings.world_note_color_red = 0
+        mod._settings.world_note_color_green = 0
+        mod._settings.world_note_color_blue = 255
+        mod.on_setting_changed("world_note_color_red")
+        self.assertEqual(mod._settings.world_note_color_preset, "blue")
+
+        result = lua.execute(
+            """
+            mod._settings.world_note_opacity = 75
+            mod.on_setting_changed("world_note_opacity")
+            local widget = {
+                style = {
+                    pn_note_border = { color = {} },
+                    pn_note_bg = { color = {} },
+                    pn_note_text = { text_color = {} },
+                },
+            }
+            mod._api.apply_world_note_appearance(widget)
+            return widget
+            """
+        )
+        self.assertEqual(result.alpha_multiplier, 0.75)
+        self.assertEqual(result.style.pn_note_border.color[1], 140)
+        self.assertEqual(result.style.pn_note_border.color[2], 0)
+        self.assertEqual(result.style.pn_note_border.color[3], 0)
+        self.assertEqual(result.style.pn_note_border.color[4], 255)
+        self.assertEqual(result.style.pn_note_bg.color[1], 160)
+        self.assertEqual(result.style.pn_note_text.text_color[1], 255)
+        self.assertEqual(result.style.pn_note_text.text_color[4], 255)
+
+    def test_world_note_appearance_change_recreates_active_marker(self):
+        lua, mod = self.make_runtime(
+            {"player_notes": {"remote-account": "visible note"}}
+        )
+        hud_class = lua.execute(HUD_MODULE.read_text(encoding="utf-8-sig"))
+        scenario = lua.execute(
+            """
+            local Hud = ...
+            local local_player = { player_unit = {} }
+            local remote_unit = {}
+            ALIVE[remote_unit] = true
+            local remote_player = {
+                player_unit = remote_unit,
+                account_id = function() return "remote-account" end,
+                name = function() return "Remote" end,
+                is_human_controlled = function() return true end,
+            }
+            local player_info = {
+                account_id = function() return "remote-account" end,
+                platform_user_id = function() return nil end,
+                user_display_name = function() return "Remote#1234" end,
+                is_blocked = function() return false end,
+            }
+            local add_count = 0
+            local remove_count = 0
+            Managers = {
+                data_service = {
+                    social = {
+                        get_player_info_by_account_id = function()
+                            return player_info
+                        end,
+                    },
+                },
+                event = {
+                    trigger = function(self, event_name, ...)
+                        if event_name == "add_world_marker_unit" then
+                            local marker_type, unit, on_added = ...
+                            add_count = add_count + 1
+                            on_added("marker-" .. tostring(add_count))
+                        elseif event_name == "remove_world_marker" then
+                            remove_count = remove_count + 1
+                        end
+                    end,
+                },
+                player = {
+                    players = function()
+                        return { remote_player, local_player }
+                    end,
+                },
+                state = {
+                    game_mode = {
+                        game_mode_name = function() return "hub" end,
+                    },
+                },
+            }
+
+            local instance = setmetatable({}, { __index = Hud })
+            instance:init(
+                { player = function() return local_player end },
+                0,
+                1
+            )
+            instance:_scan_players()
+            mod._settings.world_note_opacity = 65
+            mod.on_setting_changed("world_note_opacity")
+            instance:_scan_players()
+
+            return {
+                add_count = add_count,
+                remove_count = remove_count,
+                marker_id = instance._active[remote_unit],
+                revision = instance._active_appearance_revisions[remote_unit],
+            }
+            """,
+            hud_class,
+        )
+
+        self.assertEqual(scenario.add_count, 2)
+        self.assertEqual(scenario.remove_count, 1)
+        self.assertEqual(scenario.marker_id, "marker-2")
+        self.assertEqual(scenario.revision, 1)
+
     def test_hud_maps_live_character_when_world_markers_are_disabled(self):
         lua, mod = self.make_runtime({"show_world_notes": False})
         hud_class = lua.execute(HUD_MODULE.read_text(encoding="utf-8-sig"))
