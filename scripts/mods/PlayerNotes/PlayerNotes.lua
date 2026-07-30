@@ -1,7 +1,7 @@
 --[[
     PlayerNotes
     Author: Eduardo
-    Version: 3.0.0
+    Version: 3.1.0
 
     Add persistent notes to any player visible in the Social panel or Party Finder.
     Three complementary display mechanisms configured through F4 Mod Options:
@@ -301,6 +301,71 @@ local flush_persistence
 local get_note
 local get_cached_player_key
 
+local WORLD_NOTE_DEFAULT_OPACITY = 50
+local WORLD_NOTE_DEFAULT_PRESET = "yellow"
+local WORLD_NOTE_COLOR_PRESETS = {
+    red    = { 255, 0, 0 },
+    blue   = { 0, 0, 255 },
+    green  = { 0, 255, 0 },
+    yellow = { 255, 255, 0 },
+}
+local WORLD_NOTE_COLOR_PRESET_ORDER = { "red", "blue", "green", "yellow" }
+
+local function bounded_integer(value, default_value, minimum, maximum)
+    value = tonumber(value)
+    if value == nil then value = default_value end
+    value = math.floor(value + 0.5)
+    return math.max(minimum, math.min(maximum, value))
+end
+
+local function matching_world_note_color_preset(red, green, blue)
+    for index = 1, #WORLD_NOTE_COLOR_PRESET_ORDER do
+        local preset_name = WORLD_NOTE_COLOR_PRESET_ORDER[index]
+        local preset = WORLD_NOTE_COLOR_PRESETS[preset_name]
+        if red == preset[1] and green == preset[2] and blue == preset[3] then
+            return preset_name
+        end
+    end
+    return "custom"
+end
+
+local initial_world_note_preset = mod:get("world_note_color_preset")
+if initial_world_note_preset ~= "custom"
+    and WORLD_NOTE_COLOR_PRESETS[initial_world_note_preset] == nil then
+    initial_world_note_preset = WORLD_NOTE_DEFAULT_PRESET
+end
+
+local initial_world_note_red = bounded_integer(
+    mod:get("world_note_color_red"),
+    255,
+    0,
+    255
+)
+local initial_world_note_green = bounded_integer(
+    mod:get("world_note_color_green"),
+    255,
+    0,
+    255
+)
+local initial_world_note_blue = bounded_integer(
+    mod:get("world_note_color_blue"),
+    0,
+    0,
+    255
+)
+local initial_world_note_color = WORLD_NOTE_COLOR_PRESETS[initial_world_note_preset]
+if initial_world_note_color then
+    initial_world_note_red = initial_world_note_color[1]
+    initial_world_note_green = initial_world_note_color[2]
+    initial_world_note_blue = initial_world_note_color[3]
+else
+    initial_world_note_preset = matching_world_note_color_preset(
+        initial_world_note_red,
+        initial_world_note_green,
+        initial_world_note_blue
+    )
+end
+
 -- Scalar settings are read by UI draw and HUD update paths. Cache them and
 -- refresh only the changed entry from mod.on_setting_changed.
 local _settings = {
@@ -312,11 +377,84 @@ local _settings = {
     show_world_notes_in_missions = mod:get("show_world_notes_in_missions") == true,
     show_session_notifications   = mod:get("show_session_notifications") ~= false,
     enable_debug_echo            = mod:get("enable_debug_echo") == true,
+    world_note_opacity           = bounded_integer(
+        mod:get("world_note_opacity"),
+        WORLD_NOTE_DEFAULT_OPACITY,
+        0,
+        100
+    ),
+    world_note_color_preset       = initial_world_note_preset,
+    world_note_color_red          = initial_world_note_red,
+    world_note_color_green        = initial_world_note_green,
+    world_note_color_blue         = initial_world_note_blue,
 }
 _api.settings = _settings
 
 -- Invalidates rendered-name and hover caches when notes or inline mode change.
 local _notes_revision = 0
+-- World markers capture their widget appearance on creation. Incrementing this
+-- value tells the two-second HUD scan to recreate existing markers after a
+-- color or opacity change.
+local _world_note_appearance_revision = 0
+_api.get_world_note_appearance_revision = function()
+    return _world_note_appearance_revision
+end
+
+local function set_mod_setting_if_changed(setting_id, value)
+    if mod:get(setting_id) ~= value then
+        -- Do not recursively notify on_setting_changed. The caller updates the
+        -- complete cached appearance and invalidates markers exactly once.
+        mod:set(setting_id, value, false)
+    end
+end
+
+-- Reconcile old or partially written settings so the dropdown and sliders are
+-- visibly coherent as soon as Mod Options opens.
+set_mod_setting_if_changed("world_note_opacity", _settings.world_note_opacity)
+set_mod_setting_if_changed(
+    "world_note_color_preset",
+    _settings.world_note_color_preset
+)
+set_mod_setting_if_changed("world_note_color_red", _settings.world_note_color_red)
+set_mod_setting_if_changed("world_note_color_green", _settings.world_note_color_green)
+set_mod_setting_if_changed("world_note_color_blue", _settings.world_note_color_blue)
+
+local function refresh_world_note_color_from_preset()
+    local preset_name = mod:get("world_note_color_preset")
+    local preset = WORLD_NOTE_COLOR_PRESETS[preset_name]
+    if not preset then
+        preset_name = "custom"
+        set_mod_setting_if_changed("world_note_color_preset", preset_name)
+    end
+
+    _settings.world_note_color_preset = preset_name
+    if preset then
+        _settings.world_note_color_red = preset[1]
+        _settings.world_note_color_green = preset[2]
+        _settings.world_note_color_blue = preset[3]
+        set_mod_setting_if_changed("world_note_color_red", preset[1])
+        set_mod_setting_if_changed("world_note_color_green", preset[2])
+        set_mod_setting_if_changed("world_note_color_blue", preset[3])
+    end
+    _world_note_appearance_revision = _world_note_appearance_revision + 1
+end
+
+local function refresh_world_note_color_from_sliders()
+    local red = bounded_integer(mod:get("world_note_color_red"), 255, 0, 255)
+    local green = bounded_integer(mod:get("world_note_color_green"), 255, 0, 255)
+    local blue = bounded_integer(mod:get("world_note_color_blue"), 0, 0, 255)
+    local preset_name = matching_world_note_color_preset(red, green, blue)
+
+    _settings.world_note_color_red = red
+    _settings.world_note_color_green = green
+    _settings.world_note_color_blue = blue
+    _settings.world_note_color_preset = preset_name
+    set_mod_setting_if_changed("world_note_color_red", red)
+    set_mod_setting_if_changed("world_note_color_green", green)
+    set_mod_setting_if_changed("world_note_color_blue", blue)
+    set_mod_setting_if_changed("world_note_color_preset", preset_name)
+    _world_note_appearance_revision = _world_note_appearance_revision + 1
+end
 
 local function valid_player_id(player_id)
     local value_type = type(player_id)
@@ -1370,6 +1508,51 @@ local _pn_toptext_def = UIWidget.create_definition({
 
 local _pn_world_note_size = { 280, 30 }
 
+local function set_world_note_color(color, alpha, red, green, blue)
+    if type(color) ~= "table" then return end
+    color[1] = alpha
+    color[2] = red
+    color[3] = green
+    color[4] = blue
+end
+
+local function apply_world_note_appearance(widget)
+    if type(widget) ~= "table" then return end
+
+    local red = _settings.world_note_color_red
+    local green = _settings.world_note_color_green
+    local blue = _settings.world_note_color_blue
+    widget.alpha_multiplier = _settings.world_note_opacity / 100
+
+    local style = widget.style
+    if type(style) ~= "table" then return end
+    local border_style = style.pn_note_border
+    local background_style = style.pn_note_bg
+    local text_style = style.pn_note_text
+    set_world_note_color(
+        border_style and border_style.color,
+        140,
+        red,
+        green,
+        blue
+    )
+    set_world_note_color(
+        background_style and background_style.color,
+        160,
+        8,
+        8,
+        8
+    )
+    set_world_note_color(
+        text_style and text_style.text_color,
+        255,
+        red,
+        green,
+        blue
+    )
+end
+_api.apply_world_note_appearance = apply_world_note_appearance
+
 local function set_world_note_geometry(style, width, height, offset_x, offset_y)
     if type(style) ~= "table" then return end
 
@@ -1423,12 +1606,13 @@ local _pn_world_marker_template = {
         local W   = _pn_world_note_size[1]
         local H   = _pn_world_note_size[2]
         return UIWidget.create_definition({
-            -- Outer border (semi-transparent warm accent)
+            -- Outer border. The appearance helper applies the configured RGB
+            -- channels and overall opacity when the marker enters.
             {
                 pass_type = "rect",
                 style_id  = "pn_note_border",
                 style     = {
-                    color  = { 70, 200, 160, 80 },
+                    color  = { 140, 255, 255, 0 },
                     offset = { -2, -2, 0 },
                     size   = { W + 4, H + 4 },
                 },
@@ -1438,7 +1622,7 @@ local _pn_world_marker_template = {
                 pass_type = "rect",
                 style_id  = "pn_note_bg",
                 style     = {
-                    color  = { 80, 8, 8, 8 },
+                    color  = { 160, 8, 8, 8 },
                     offset = { 0, 0, 1 },
                     size   = { W, H },
                 },
@@ -1458,7 +1642,7 @@ local _pn_world_marker_template = {
                     font_type                 = "proxima_nova_bold",
                     font_size                 = 16,
                     default_font_size         = 16,
-                    text_color                = { 130, 230, 210, 160 },
+                    text_color                = { 255, 255, 255, 0 },
                     size                      = { W, H },
                 },
             },
@@ -1469,6 +1653,7 @@ local _pn_world_marker_template = {
         local text = type(data) == "table" and data.note or ""
         text = truncate_text(text, WORLD_NOTE_MAX_CHARACTERS, "...")
         widget.content.pn_note_text = text
+        apply_world_note_appearance(widget)
 
         -- Marker text is immutable. Compute geometry once rather than resizing
         -- and offsetting the widget every render frame.
@@ -2877,8 +3062,30 @@ end)
 -- ──────────────────────────────────────────────────────────────────────────────
 
 mod.on_setting_changed = function(setting_id)
-    if _settings[setting_id] == nil then return end
+    if setting_id == "world_note_color_preset" then
+        refresh_world_note_color_from_preset()
+        return
+    end
+    if setting_id == "world_note_color_red"
+        or setting_id == "world_note_color_green"
+        or setting_id == "world_note_color_blue" then
+        refresh_world_note_color_from_sliders()
+        return
+    end
+    if setting_id == "world_note_opacity" then
+        local opacity = bounded_integer(
+            mod:get(setting_id),
+            WORLD_NOTE_DEFAULT_OPACITY,
+            0,
+            100
+        )
+        _settings.world_note_opacity = opacity
+        set_mod_setting_if_changed(setting_id, opacity)
+        _world_note_appearance_revision = _world_note_appearance_revision + 1
+        return
+    end
 
+    if _settings[setting_id] == nil then return end
     _settings[setting_id] = mod:get(setting_id) == true
     if setting_id == "show_inline" then
         _notes_revision = _notes_revision + 1
@@ -2901,7 +3108,7 @@ end
 mod.on_all_mods_loaded = function()
     flush_persistence()
     if _settings.enable_debug_echo then
-        mod:echo("[PlayerNotes] v3.0.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
+        mod:echo("[PlayerNotes] v3.1.0 Loaded. /note /set_note /delete_note /pn_notes /pn_chars /pn_notes_delete_all")
     end
 end
 

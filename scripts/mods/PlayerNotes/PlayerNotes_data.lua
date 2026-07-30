@@ -1,7 +1,7 @@
 return {
     name         = "PlayerNotes",
     description  = "Add persistent notes to players and see them in Social, Party Finder, and the game world.",
-    version      = "3.0.0",
+    version      = "3.1.0",
     is_togglable = true,
     options = {
         widgets = {
@@ -39,6 +39,64 @@ return {
                 default_value = true,
                 title         = "opt_show_world_notes_title",
                 tooltip       = "opt_show_world_notes_title_description",
+            },
+            {
+                setting_id  = "world_note_appearance_group",
+                type        = "group",
+                title       = "opt_world_note_appearance_group_title",
+                tooltip     = "opt_world_note_appearance_group_title_description",
+                sub_widgets = {
+                    {
+                        setting_id    = "world_note_opacity",
+                        type          = "numeric",
+                        default_value = 50,
+                        range         = { 0, 100 },
+                        step_size_value = 1,
+                        title         = "opt_world_note_opacity_title",
+                        tooltip       = "opt_world_note_opacity_title_description",
+                    },
+                    {
+                        setting_id    = "world_note_color_preset",
+                        type          = "dropdown",
+                        default_value = "yellow",
+                        title         = "opt_world_note_color_preset_title",
+                        tooltip       = "opt_world_note_color_preset_title_description",
+                        options       = {
+                            { text = "opt_world_note_color_custom", value = "custom" },
+                            { text = "opt_world_note_color_red", value = "red" },
+                            { text = "opt_world_note_color_blue", value = "blue" },
+                            { text = "opt_world_note_color_green", value = "green" },
+                            { text = "opt_world_note_color_yellow", value = "yellow" },
+                        },
+                    },
+                    {
+                        setting_id    = "world_note_color_red",
+                        type          = "numeric",
+                        default_value = 255,
+                        range         = { 0, 255 },
+                        step_size_value = 1,
+                        title         = "opt_world_note_color_red_title",
+                        tooltip       = "opt_world_note_color_red_title_description",
+                    },
+                    {
+                        setting_id    = "world_note_color_green",
+                        type          = "numeric",
+                        default_value = 255,
+                        range         = { 0, 255 },
+                        step_size_value = 1,
+                        title         = "opt_world_note_color_green_title",
+                        tooltip       = "opt_world_note_color_green_title_description",
+                    },
+                    {
+                        setting_id    = "world_note_color_blue",
+                        type          = "numeric",
+                        default_value = 0,
+                        range         = { 0, 255 },
+                        step_size_value = 1,
+                        title         = "opt_world_note_color_blue_title",
+                        tooltip       = "opt_world_note_color_blue_title_description",
+                    },
+                },
             },
             {
                 setting_id  = "experimental_group",

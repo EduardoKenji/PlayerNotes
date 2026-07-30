@@ -2,7 +2,23 @@
 
 All notable PlayerNotes changes are documented here.
 
-## [3.0.0] - Unreleased
+## [3.1.0] - 2026-07-29
+
+### Added
+
+- Added a dedicated **2D World Note Appearance** options section.
+- Added a 0–100% overall opacity slider for world-note boxes.
+- Added Custom, Red, Blue, Green, and Yellow color choices, with Yellow as the default.
+- Added independent 0–255 red, green, and blue sliders.
+- Added behavior coverage for default appearance, bidirectional preset/RGB synchronization, rendered widget colors, opacity, and live marker refresh.
+
+### Changed
+
+- Selecting a named color now updates all RGB sliders immediately.
+- Moving an RGB slider now selects an exact matching named color or switches the dropdown to Custom.
+- Active world-note markers are recreated once on the next bounded HUD scan after an appearance change, avoiding per-frame settings reads.
+
+## [3.0.0] - 2026-07-29
 
 ### Added
 

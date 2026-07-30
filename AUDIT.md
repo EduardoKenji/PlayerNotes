@@ -1,4 +1,4 @@
-# PlayerNotes project audit (2.10.0 baseline, 3.0.0 follow-up)
+# PlayerNotes project audit (2.10.0 baseline, 3.1.0 follow-up)
 
 Audit date: 2026-07-29
 
@@ -8,7 +8,7 @@ Status: implementation complete; in-game release-candidate validation still requ
 
 This review covered:
 
-- The current repository and its history through the 2.9.0 integration branch.
+- The current repository and its history through the 3.1.0 release candidate.
 - The Nexus 2.8.0 package and the locally installed 2.8.1 code that were reviewed during the 2.9.0 reconciliation.
 - LucLeto's CPU-usage changes.
 - All PlayerNotes Lua modules, metadata, options, localization, documentation, and release tooling.
@@ -58,6 +58,7 @@ The retained 2.9.0 work addresses the dominant repeated CPU paths:
 - Two-second HUD scans rather than per-frame player scans.
 - Dirty-flagged, batched persistence.
 - Per-marker immutable data and one-time geometry.
+- Cached world-note opacity/RGB values with revision-based marker refresh instead of per-frame settings reads.
 - Reused HUD scan buffers.
 
 The 2.10.0 pass adds the bounds that were missing:
@@ -103,7 +104,7 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
 |---|---|---|
 | P1 before release | The automated harness cannot reproduce Stingray rendering, input navigation, actual Social/Party Finder data timing, or DMF serialization. | Complete every in-game scenario in `RELEASING.md` against the packaged archive and inspect the console log. |
 | P1 after Darktide updates | PlayerNotes hooks private game view blueprints and methods that Fatshark may rename or reshape. | Re-run syntax/behavior checks, then the full Social, Party Finder, HUD, and lifecycle smoke matrix after each major patch. |
-| P2 | The main module is large and mixes persistence, identity, UI, commands, and lifecycle. | Apply the staged module extraction above in 2.11.x; do not combine it with feature work. |
+| P2 | The main module is large and mixes persistence, identity, UI, commands, and lifecycle. | Apply the staged module extraction above in a future maintenance branch; do not combine it with feature work. |
 | P2 | Character names are not unique; the single best mapping remains heuristic even with mission priority and recency. | Consider storing multiple candidate identities per character name and requiring disambiguation when candidates conflict. |
 | P2 | All user-facing localization is English-only. | Add locale contributions after stable English keys are finalized. |
 | P2 | Tests currently run locally but are not enforced by continuous integration. | Add a minimal CI job for `tools/test_player_notes.py`, version consistency, and `git diff --check`. |
@@ -113,7 +114,7 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
 ## Verification performed
 
 - Parsed every tracked Lua file with `luaparser`.
-- Executed seventeen behavior tests through Lupa:
+- Executed nineteen behavior tests through Lupa:
   - Platform-key to account-key migration across all persisted structures.
   - Unique discriminated-tag migration for offline cross-platform roster records.
   - Refusal to migrate an ambiguous discriminated tag.
@@ -131,6 +132,8 @@ Each extraction should preserve the internal API currently consumed by `hud_elem
   - Character mapping while world-marker rendering is disabled.
   - Continued HUD player processing and persistence after one marker request fails.
   - Party Finder Show Details preview-note injection, hot-reload deduplication, identity lookup, truncation, details-only visibility, and option gating.
+  - Bidirectional world-note color preset/RGB synchronization, custom-color detection, opacity, and rendered widget colors.
+  - Recreation of active world-note markers after an appearance revision.
 - Validated every localization key referenced by code and option metadata.
 - Compared identity order, hook behavior, marker callback behavior, and lifecycle assumptions against the local Darktide and DMF sources.
 
@@ -138,6 +141,6 @@ Run the checks with:
 
 ```powershell
 python .\tools\test_player_notes.py
-.\tools\check_release.ps1 -ExpectedVersion 3.0.0
+.\tools\check_release.ps1 -ExpectedVersion 3.1.0
 git diff --check
 ```

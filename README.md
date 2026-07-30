@@ -1,8 +1,8 @@
-# PlayerNotes v3.0.0
+# PlayerNotes v3.1.0
 
 PlayerNotes adds private, persistent notes to players you encounter in Warhammer 40,000: Darktide. Notes can be created from the Social panel or Party Finder and shown in the roster, Party Finder group details, on hover, or above nearby players.
 
-Version 3.0.0 adds at-a-glance notes for every saved player in a Party Finder group while Show Details is held. It retains the reliability, identity, and performance work completed for 2.10.0.
+Version 3.1.0 adds configurable opacity and color controls for 2D notes rendered above player heads. Choose Red, Blue, Green, or Yellow to synchronize the RGB sliders automatically, or tune the channels directly for a custom color. It retains the Party Finder group-note display and the reliability, identity, and performance work completed in earlier releases.
 
 ## Features
 
@@ -12,7 +12,7 @@ Version 3.0.0 adds at-a-glance notes for every saved player in a Party Finder gr
 - Show a short note preview beside a Social-roster name. When inline text is disabled, a compact note icon is shown instead.
 - Show the full note in a floating hover tooltip.
 - Show a top-left hover bar. It displays last-seen information when available and otherwise displays a bounded note preview.
-- Show note boxes above nearby players in the Mourningstar, with optional mission support.
+- Show note boxes above nearby players in the Mourningstar, with optional mission support and configurable opacity and RGB color.
 - Notify once after entering a map when a player with a saved note is present.
 - Record where and when a noted player was last encountered.
 - Resolve `/set_note` and `/delete_note` by a uniquely mapped player tag or a recently observed character name.
@@ -37,7 +37,7 @@ Notes are stored only in the local DMF settings. PlayerNotes does not upload or 
 4. Add `PlayerNotes` to `mod_load_order.txt` if your mod manager does not do so.
 5. Run `toggle_darktide_mods.bat` again after a game update when DML requests it.
 
-## Upgrading from 2.8.x, 2.9.x, or 2.10.x
+## Upgrading from 2.8.x, 2.9.x, 2.10.x, or 3.0.x
 
 Existing notes and caches are reused. Since 2.10.0, PlayerNotes treats Darktide's `account_id` as the canonical player identity. When an older `platform_user_id` and its corresponding account ID are both available, the stored note and related metadata are migrated automatically. Cross-network offline friends may temporarily hide the older platform ID; when their full `name#1234` tag has exactly one stored identity, PlayerNotes uses that unique tag once to migrate the legacy data to the visible account ID. Plain or ambiguous names are never migrated this way.
 
@@ -108,6 +108,10 @@ Open **F4 → Mod Options → PlayerNotes**.
 - **Show floating tooltip on hover**: show the full note beside the hovered row.
 - **Show group notes in Party Finder details**: while Show Details is held, show every saved note directly on the matching group-member card.
 - **Show note above player head**: show nearby note boxes in the Mourningstar.
+- **2D World Note Appearance**:
+  - **Opacity**: set the complete world-note box opacity from 0–100%; the default is 50%.
+  - **Color**: choose Custom, Red, Blue, Green, or Yellow; Yellow is the default. Choosing a named preset updates all RGB sliders immediately.
+  - **Red / Green / Blue (RGB)**: tune each channel from 0–255. The dropdown follows an exact named-color match and changes to Custom for any other combination.
 - **Show 2D world notes in missions**: extend world notes into missions; off by default.
 - **Notify when noted players are present**: show one native notification after entering a map.
 - **Enable debug mod:echo**: print the loaded version and command summary after all mods load.
@@ -125,7 +129,7 @@ Deleting one note also removes that player's last-seen entry. Name and character
 
 ## Performance and reliability
 
-The 3.0.0 code retains the 2.10.0 defensive bounds and 2.9.0 hot-path optimizations:
+The 3.1.0 code retains the 2.10.0 defensive bounds and 2.9.0 hot-path optimizations:
 
 - Social names are decorated only in the Social-roster blueprint; `PlayerInfo.user_display_name` is not globally hooked.
 - Social hover uses each rendered widget's real bounds rather than imposing a fixed nominal bottom on scrolled rows.
@@ -134,6 +138,7 @@ The 3.0.0 code retains the 2.10.0 defensive bounds and 2.9.0 hot-path optimizati
 - Identity misses and platform-only fallbacks retry after a cooldown so loading-state results do not become permanent.
 - Persisted table reads are cached; writes are dirty-flagged and batched.
 - HUD identity and last-seen scans run every two seconds and reuse marker/seen tables; marker creation remains independently controlled by the world-note options.
+- World-note appearance is cached; changing opacity or color invalidates each active marker once so it refreshes during the next HUD scan without per-frame settings reads.
 - Each player scan is isolated so one malformed player or marker request does not prevent cleanup or processing of the others.
 - Last-seen data grows with saved notes, not with every teammate ever encountered.
 - Character mappings and transient identity sets are bounded or rebuilt.
@@ -165,7 +170,7 @@ Run the repository checks from its root:
 
 ```powershell
 python .\tools\test_player_notes.py
-.\tools\check_release.ps1 -ExpectedVersion 3.0.0
+.\tools\check_release.ps1 -ExpectedVersion 3.1.0
 git diff --check
 ```
 
@@ -191,7 +196,7 @@ The default destination matches this repository's development layout. Pass `-Des
 ## Credits
 
 - EduardoKenji: original mod and maintenance.
-- LucLeto: CPU-usage reduction work integrated in 2.9.0 and retained in 3.0.0.
+- LucLeto: CPU-usage reduction work integrated in 2.9.0 and retained in 3.1.0.
 
 ## License
 

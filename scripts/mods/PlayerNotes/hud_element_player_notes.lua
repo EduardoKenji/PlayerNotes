@@ -131,6 +131,7 @@ HudElementPlayerNotes.init = function(self, parent, draw_layer, start_scale)
     self._scan_timer    = 0        -- fire first scan on next update
     self._active        = {}       -- player_unit → marker_id
     self._active_notes  = {}       -- player_unit → note text (for change detection)
+    self._active_appearance_revisions = {} -- player_unit → appearance revision
     self._seen_buffer   = {}       -- Persistent buffer to avoid RAM churn
     self._in_mission    = nil
     self._current_location = nil
@@ -195,6 +196,7 @@ local function _remove_marker(self, unit, event_manager)
     end
     self._active[unit] = nil
     self._active_notes[unit] = nil
+    self._active_appearance_revisions[unit] = nil
 end
 
 local function _scan_player(
@@ -264,8 +266,15 @@ local function _scan_player(
 
     seen[unit] = true
 
+    local get_appearance_revision = _api.get_world_note_appearance_revision
+    local appearance_revision = get_appearance_revision
+        and get_appearance_revision()
+        or 0
     if self._active[unit] then
-        if self._active_notes[unit] == note then return end
+        if self._active_notes[unit] == note
+            and self._active_appearance_revisions[unit] == appearance_revision then
+            return
+        end
         _remove_marker(self, unit, event_manager)
     end
 
@@ -280,6 +289,7 @@ local function _scan_player(
             end
             self._active[unit] = marker_id
             self._active_notes[unit] = note
+            self._active_appearance_revisions[unit] = appearance_revision
         end,
         { puid = puid, note = note }
     )
@@ -369,6 +379,7 @@ end
 HudElementPlayerNotes._clear_all_markers = function(self)
     if not next(self._active) then
         _clear_table(self._active_notes)
+        _clear_table(self._active_appearance_revisions)
         _clear_table(self._seen_buffer)
         return
     end
@@ -382,6 +393,7 @@ HudElementPlayerNotes._clear_all_markers = function(self)
     end
     _clear_table(self._active)
     _clear_table(self._active_notes)
+    _clear_table(self._active_appearance_revisions)
     _clear_table(self._seen_buffer)
 end
 

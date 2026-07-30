@@ -13,7 +13,7 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 
    ```powershell
    python .\tools\test_player_notes.py
-   .\tools\check_release.ps1 -ExpectedVersion 3.0.0
+   .\tools\check_release.ps1 -ExpectedVersion 3.1.0
    git diff --check
    ```
 
@@ -40,6 +40,10 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
 - Repeat the Show Details check with no-note, one-note, and multi-note groups. Confirm member names remain readable, previews stay inside their cards, release clears the details view, and the option disables/re-enables only this display.
 - Remap Show Details or use a controller and verify the group-note display follows the configured action rather than a hard-coded Shift key.
 - Enter the Mourningstar and a mission; verify last-seen location, session notification, and world-note cleanup.
+- In **2D World Note Appearance**, move Opacity through 0%, 50%, and 100%; verify an existing world note refreshes within one HUD scan and that distance fading still composes with the selected opacity.
+- Select Red, Blue, Green, and Yellow; verify the RGB sliders immediately become `(255,0,0)`, `(0,0,255)`, `(0,255,0)`, and `(255,255,0)` respectively and visible notes update.
+- Move one RGB slider away from a preset and verify the Color dropdown changes to Custom. Restore an exact preset combination and verify the corresponding named color is selected.
+- Reload PlayerNotes and re-open Mod Options; verify the chosen opacity, dropdown value, and RGB channels persist and remain coherent.
 - Load 2.8.x/2.9.x settings and verify a platform-keyed note migrates to the same player's account ID without loss.
 - Hover a noted cross-network friend while offline and verify their full `name#1234` tag still resolves the tooltip and migrates the legacy key only when unique.
 - Disable world-note rendering, target a visible Mourningstar character with `/set_note <character> <text>`, and verify the command resolves without first opening Social.
@@ -63,5 +67,5 @@ Use a `release/<version>` branch and keep `main` protected until the candidate h
    - `scripts/`
 2. Install that exact archive into a clean mod directory and repeat the smoke test.
 3. Merge the reviewed release branch.
-4. Create the signed or annotated tag `v3.0.0` from the merge commit.
+4. Create the signed or annotated tag `v3.1.0` from the merge commit.
 5. Publish the same archive and release notes to GitHub Releases and Nexus Mods.
